@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.48.0 (2026-08-09)
+
+### Features
+
+- **dittobench**: Add local v8 rehearsal command
+  ([#585](https://github.com/ditto-assistant/ditto-subnet/pull/585),
+  [`c63093c`](https://github.com/ditto-assistant/ditto-subnet/commit/c63093c5221f2b34ce717aa9ab0425488b55f279))
+
+
 ## v0.47.0 (2026-08-09)
 
 ### Chores
