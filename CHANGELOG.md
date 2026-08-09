@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v0.47.0 (2026-08-09)
+
+### Chores
+
+- **deps**: Bump pnpm/action-setup from 6.0.9 to 6.0.10 in the actions group
+  ([#565](https://github.com/ditto-assistant/ditto-subnet/pull/565),
+  [`76eb1ed`](https://github.com/ditto-assistant/ditto-subnet/commit/76eb1ed8bece98244cb1f0c010c7a1184df82e3d))
+
+- **deps-dev**: Bump oxlint from 1.76.0 to 1.77.0 in /apps/platform/dashboard
+  ([#564](https://github.com/ditto-assistant/ditto-subnet/pull/564),
+  [`3de5acd`](https://github.com/ditto-assistant/ditto-subnet/commit/3de5acdab7a20d4c74f43d6fde6a764d679bc8b9))
+
+### Features
+
+- **backroom**: Ship the MCP agent-access page
+  ([#572](https://github.com/ditto-assistant/ditto-subnet/pull/572),
+  [`9c7cad5`](https://github.com/ditto-assistant/ditto-subnet/commit/9c7cad54899fca4f0d3003cbce7d4ea46bf52ada))
+
+
 ## v0.46.0 (2026-08-08)
 
 ### Bug Fixes
