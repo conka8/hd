@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.48.3 (2026-08-10)
+
+### Bug Fixes
+
+- **release**: Bridge frozen validator updaters
+  ([#587](https://github.com/ditto-assistant/ditto-subnet/pull/587),
+  [`1d56aae`](https://github.com/ditto-assistant/ditto-subnet/commit/1d56aae26a6153f7fdb094cc23700a44dcd96762))
+
+
 ## v0.48.2 (2026-08-10)
 
 ### Bug Fixes
