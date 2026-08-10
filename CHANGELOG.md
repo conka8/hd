@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.49.1 (2026-08-10)
+
+### Bug Fixes
+
+- **backroom**: Bind OAuth KV before Vite build
+  ([#598](https://github.com/ditto-assistant/ditto-subnet/pull/598),
+  [`cdde10e`](https://github.com/ditto-assistant/ditto-subnet/commit/cdde10efaefe6f707fbebd826f970767b870cb7a))
+
+- **infra**: Permit autoscaler MIG handoff
+  ([#597](https://github.com/ditto-assistant/ditto-subnet/pull/597),
+  [`79428c6`](https://github.com/ditto-assistant/ditto-subnet/commit/79428c6ea426a1e4606604f025f3ccd828aacd04))
+
+
 ## v0.49.0 (2026-08-10)
 
 ### Bug Fixes
