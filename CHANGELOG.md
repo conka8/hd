@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.49.2 (2026-08-10)
+
+### Bug Fixes
+
+- **dittobench**: Advertise executable bench v9
+  ([#601](https://github.com/ditto-assistant/ditto-subnet/pull/601),
+  [`daee4eb`](https://github.com/ditto-assistant/ditto-subnet/commit/daee4eb7c1e86b41b08641fe6231249523f9b043))
+
+- **platform**: Ship self-contained relay releases
+  ([#602](https://github.com/ditto-assistant/ditto-subnet/pull/602),
+  [`778a2c3`](https://github.com/ditto-assistant/ditto-subnet/commit/778a2c3581d639028ca9df5e2180c802cc6d3c5d))
+
+
 ## v0.49.1 (2026-08-10)
 
 ### Bug Fixes
