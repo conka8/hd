@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.48.4 (2026-08-10)
+
+### Bug Fixes
+
+- **screener**: Activate Targon v3 controller
+  ([#588](https://github.com/ditto-assistant/ditto-subnet/pull/588),
+  [`849b7a9`](https://github.com/ditto-assistant/ditto-subnet/commit/849b7a97385e8620b7d8dafe984862c839f4b26e))
+
+
 ## v0.48.3 (2026-08-10)
 
 ### Bug Fixes
