@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.48.1 (2026-08-10)
+
+### Bug Fixes
+
+- Preserve frozen updater release compatibility
+  ([#553](https://github.com/ditto-assistant/ditto-subnet/pull/553),
+  [`e19daf5`](https://github.com/ditto-assistant/ditto-subnet/commit/e19daf5daeae28c7014baa9d55065eb9be83dc0c))
+
+
 ## v0.48.0 (2026-08-09)
 
 ### Features
