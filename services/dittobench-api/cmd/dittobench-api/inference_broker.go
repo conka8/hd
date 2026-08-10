@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -54,6 +55,7 @@ const (
 	embeddingMaximumInputs     = 256
 	embeddingBodyLimit         = 1 << 20
 	embeddingResponseLimit     = 16 << 20
+	toolRouteBodyLimit         = 64 << 10
 	embeddingSessionRequests   = 100000
 	embeddingSessionInputs     = 1000000
 	embeddingSessionInputBytes = 1 << 30
@@ -258,8 +260,19 @@ func (b *inferenceBroker) beginRelayWait(session *brokerSession) func() {
 
 type toolRoute struct {
 	expectedSourceIP string
+	allowNATFallback bool
+	capabilityKey    []byte
 	handler          http.Handler
 	slots            chan struct{}
+}
+
+// registeredToolRoute is a short-lived capability mint owned by one benchmark
+// run. The key never crosses the trust boundary: callers receive only a
+// case/user-bound MAC in the endpoint URL, and unregistering the route revokes
+// every outstanding capability at once.
+type registeredToolRoute struct {
+	id            string
+	capabilityKey []byte
 }
 
 // platformGrantDenied marks a platform inference response that declined to
@@ -827,14 +840,24 @@ func validLegacyRelayIdentity(relay relayHealthSnapshot) error {
 	return nil
 }
 
-func (b *inferenceBroker) registerTool(h http.Handler, expectedSourceIP string) (string, func(), error) {
+func (b *inferenceBroker) registerTool(
+	h http.Handler,
+	expectedSourceIP string,
+	allowNATFallback bool,
+) (registeredToolRoute, func(), error) {
 	id, err := randomToken(18)
 	if err != nil {
-		return "", func() {}, err
+		return registeredToolRoute{}, func() {}, err
+	}
+	key := make([]byte, sha256.Size)
+	if _, err := rand.Read(key); err != nil {
+		return registeredToolRoute{}, func() {}, err
 	}
 	b.mu.Lock()
 	b.tools[id] = toolRoute{
 		expectedSourceIP: expectedSourceIP,
+		allowNATFallback: allowNATFallback,
+		capabilityKey:    key,
 		handler:          h,
 		slots:            make(chan struct{}, brokerPerSourceConcurrency),
 	}
@@ -844,7 +867,7 @@ func (b *inferenceBroker) registerTool(h http.Handler, expectedSourceIP string) 
 		delete(b.tools, id)
 		b.mu.Unlock()
 	}
-	return id, stop, nil
+	return registeredToolRoute{id: id, capabilityKey: key}, stop, nil
 }
 
 func (b *inferenceBroker) handleTool(w http.ResponseWriter, r *http.Request) {
@@ -856,10 +879,21 @@ func (b *inferenceBroker) handleTool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
+		if !validToolCapability(route.capabilityKey, "health", "", r.URL.Query().Get("cap")) {
+			writeError(w, http.StatusUnauthorized, "tool route unavailable")
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if route.expectedSourceIP == "" || sourceIP(r.RemoteAddr) != route.expectedSourceIP {
+	caseID := r.URL.Query().Get("case_id")
+	userID := r.URL.Query().Get("user_id")
+	if !validToolCapability(route.capabilityKey, caseID, userID, r.URL.Query().Get("cap")) {
+		writeError(w, http.StatusUnauthorized, "tool route unavailable")
+		return
+	}
+	if route.expectedSourceIP == "" ||
+		(sourceIP(r.RemoteAddr) != route.expectedSourceIP && !route.allowNATFallback) {
 		writeError(w, http.StatusUnauthorized, "tool route unavailable")
 		return
 	}
@@ -871,9 +905,63 @@ func (b *inferenceBroker) handleTool(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "tool source is at capacity")
 		return
 	}
+	if !toolRequestMatchesCapability(w, r, caseID, userID) {
+		return
+	}
 	forwarded := r.Clone(r.Context())
 	forwarded.URL.Path = "/tool"
+	forwarded.URL.RawQuery = ""
 	route.handler.ServeHTTP(w, forwarded)
+}
+
+func (r registeredToolRoute) endpoint(baseURL, caseID, userID string) string {
+	values := url.Values{
+		"case_id": {caseID},
+		"user_id": {userID},
+		"cap":     {toolCapability(r.capabilityKey, caseID, userID)},
+	}
+	return baseURL + "?" + values.Encode()
+}
+
+func (r registeredToolRoute) healthEndpoint(baseURL string) string {
+	return baseURL + "?cap=" + url.QueryEscape(toolCapability(r.capabilityKey, "health", ""))
+}
+
+func toolCapability(key []byte, caseID, userID string) string {
+	mac := hmac.New(sha256.New, key)
+	_, _ = fmt.Fprintf(mac, "dittobench-tool-v1\n%d:%s\n%d:%s", len(caseID), caseID, len(userID), userID)
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func validToolCapability(key []byte, caseID, userID, provided string) bool {
+	want := toolCapability(key, caseID, userID)
+	return len(provided) == len(want) && subtle.ConstantTimeCompare([]byte(provided), []byte(want)) == 1
+}
+
+func toolRequestMatchesCapability(w http.ResponseWriter, r *http.Request, caseID, userID string) bool {
+	body, err := io.ReadAll(io.LimitReader(r.Body, toolRouteBodyLimit+1))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid tool request")
+		return false
+	}
+	if len(body) > toolRouteBodyLimit {
+		writeError(w, http.StatusRequestEntityTooLarge, "tool request too large")
+		return false
+	}
+	var identity struct {
+		CaseID string `json:"case_id"`
+		UserID string `json:"user_id"`
+	}
+	if err := json.Unmarshal(body, &identity); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid tool request")
+		return false
+	}
+	if identity.CaseID != caseID || identity.UserID != userID {
+		writeError(w, http.StatusUnauthorized, "tool route unavailable")
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	return true
 }
 
 func randomToken(n int) (string, error) {
@@ -1040,7 +1128,7 @@ func (b *inferenceBroker) claimRun(id, runID string, identity brokerTicketIdenti
 			GrantID: session.grantID, AgentID: session.ticketAgentID,
 			SlotID: session.ticketSlotID, TicketDeadline: session.ticketDeadline,
 		}
-		if !validV7RouteProfile(session.profileRevision) || !validBrokerTicketIdentity(identity, now) ||
+		if !validBenchmarkRouteProfile(benchVersion, session.profileRevision) || !validBrokerTicketIdentity(identity, now) ||
 			identity.GrantID != expected.GrantID || identity.AgentID != expected.AgentID ||
 			identity.SlotID != expected.SlotID || !identity.TicketDeadline.Equal(expected.TicketDeadline) {
 			return false
@@ -1819,14 +1907,20 @@ func (b *inferenceBroker) proxy(w http.ResponseWriter, r *http.Request, session 
 	// defaults to qwen/qwen3-32b) is scored on the locked model instead of
 	// failing closed with an error it cannot act on. The platform proxy re-locks
 	// the same value independently, so this is convenience, not the boundary.
-	if modelRequest.Model != session.requestModel {
-		rewritten, rewriteErr := rewriteRequestModel(body, session.requestModel)
+	requestedModel := modelRequest.Model
+	if requestedModel != session.requestModel || session.benchVersion == protocol.BenchVersionV9 {
+		rewritten, rewriteErr := normalizeChatRequest(body, session.requestModel, session.benchVersion)
 		if rewriteErr != nil {
+			if session.benchVersion == protocol.BenchVersionV9 {
+				session.agentRequestRejections++
+			}
 			session.mu.Unlock()
-			writeError(w, http.StatusBadRequest, "invalid inference request")
+			writeError(w, http.StatusBadRequest, rewriteErr.Error())
 			return
 		}
-		logSubstitutedModel(session.boundRunID, modelRequest.Model, session.requestModel)
+		if requestedModel != session.requestModel {
+			logSubstitutedModel(session.boundRunID, requestedModel, session.requestModel)
+		}
 		body = rewritten
 	}
 	grantID, bearer, proxyURL, generation := session.grantID, session.bearer, session.proxyURL, session.generation
@@ -2160,11 +2254,72 @@ func (b *inferenceBroker) snapshot(id string) (relayHealthSnapshot, error) {
 // re-encoding is deliberate: it normalises exactly one field and cannot smuggle
 // an unmodelled field past the schema the platform proxy validates downstream.
 func rewriteRequestModel(body []byte, model string) ([]byte, error) {
+	return normalizeChatRequest(body, model, 0)
+}
+
+const benchV9DefaultReasoningEffort = "medium"
+
+var benchV9ReasoningEfforts = map[string]struct{}{
+	"low": {}, "medium": {}, "high": {},
+}
+
+// normalizeChatRequest pins the ticket model and, for v9, canonicalizes the
+// agent-owned reasoning strategy before either a Platform reservation or a
+// local relay is reachable. The flat OpenAI alias and nested OpenRouter form
+// collapse to one nested block. Provider-only controls never survive the
+// boundary: the trusted side owns exclude=true for privacy, while the agent
+// owns only low/medium/high effort. V7/V8 retain byte-for-byte reasoning
+// semantics and their fixed-medium Platform contract.
+func normalizeChatRequest(body []byte, model string, benchVersion int) ([]byte, error) {
 	var decoded map[string]any
 	if err := json.Unmarshal(body, &decoded); err != nil || decoded == nil {
 		return nil, fmt.Errorf("inference request is not a JSON object")
 	}
 	decoded["model"] = model
+	if benchVersion != protocol.BenchVersionV9 {
+		return json.Marshal(decoded)
+	}
+
+	nestedRaw, nestedPresent := decoded["reasoning"]
+	flatRaw, flatPresent := decoded["reasoning_effort"]
+	nestedEffort := ""
+	flatEffort := ""
+	if nestedPresent {
+		nested, ok := nestedRaw.(map[string]any)
+		if !ok || len(nested) != 1 {
+			return nil, fmt.Errorf("invalid reasoning")
+		}
+		candidate, ok := nested["effort"].(string)
+		if !ok {
+			return nil, fmt.Errorf("invalid reasoning effort")
+		}
+		if _, ok = benchV9ReasoningEfforts[candidate]; !ok {
+			return nil, fmt.Errorf("invalid reasoning effort")
+		}
+		nestedEffort = candidate
+	}
+	if flatPresent {
+		candidate, ok := flatRaw.(string)
+		if !ok {
+			return nil, fmt.Errorf("invalid reasoning_effort")
+		}
+		if _, ok = benchV9ReasoningEfforts[candidate]; !ok {
+			return nil, fmt.Errorf("invalid reasoning_effort")
+		}
+		flatEffort = candidate
+	}
+	if nestedEffort != "" && flatEffort != "" && nestedEffort != flatEffort {
+		return nil, fmt.Errorf("conflicting reasoning effort")
+	}
+	effort := nestedEffort
+	if effort == "" {
+		effort = flatEffort
+	}
+	if effort == "" {
+		effort = benchV9DefaultReasoningEffort
+	}
+	delete(decoded, "reasoning_effort")
+	decoded["reasoning"] = map[string]any{"effort": effort, "exclude": true}
 	return json.Marshal(decoded)
 }
 
