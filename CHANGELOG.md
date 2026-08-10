@@ -2,6 +2,61 @@
 
 <!-- version list -->
 
+## v0.49.0 (2026-08-10)
+
+### Bug Fixes
+
+- **datagen**: Vary and floor the v9 scored family mix
+  ([#577](https://github.com/ditto-assistant/ditto-subnet/pull/577),
+  [`0b6d7e7`](https://github.com/ditto-assistant/ditto-subnet/commit/0b6d7e7968dc12faf10e52705917cf899500d793))
+
+- **dittobench**: Keep adaptive ablations fail closed
+  ([#589](https://github.com/ditto-assistant/ditto-subnet/pull/589),
+  [`99f5c2d`](https://github.com/ditto-assistant/ditto-subnet/commit/99f5c2da92fa5b5628bad59536255a3b36a46169))
+
+- **dittobench**: Keep zero-inference runs out of no-fault retries
+  ([#574](https://github.com/ditto-assistant/ditto-subnet/pull/574),
+  [`6327e39`](https://github.com/ditto-assistant/ditto-subnet/commit/6327e3971a8bf8effe153b216ab090818aeb83fc))
+
+- **grade**: Harden canned-answer scoring for v9
+  ([#578](https://github.com/ditto-assistant/ditto-subnet/pull/578),
+  [`3421271`](https://github.com/ditto-assistant/ditto-subnet/commit/342127112311478afc6bc10a34b961cca0446904))
+
+- **infra**: Grant autoscaler read for updates
+  ([#596](https://github.com/ditto-assistant/ditto-subnet/pull/596),
+  [`448e4a7`](https://github.com/ditto-assistant/ditto-subnet/commit/448e4a7b822fa6cbb5ee9f5a38c72706ef74c5da))
+
+- **screener**: Require causal reachability for malicious preflight
+  ([#575](https://github.com/ditto-assistant/ditto-subnet/pull/575),
+  [`c18518f`](https://github.com/ditto-assistant/ditto-subnet/commit/c18518feaf3469b8dbbb534be4a23d339803c486))
+
+- **screener**: Require causal role proof for benchmark findings
+  ([#576](https://github.com/ditto-assistant/ditto-subnet/pull/576),
+  [`cb6d968`](https://github.com/ditto-assistant/ditto-subnet/commit/cb6d968127b5d6fe6c38e6f43bf6593ea5887f24))
+
+### Features
+
+- **dittobench**: Add bounded v9 LongMemEval confirmation
+  ([#581](https://github.com/ditto-assistant/ditto-subnet/pull/581),
+  [`a4ff6ca`](https://github.com/ditto-assistant/ditto-subnet/commit/a4ff6cae7acc17d36a5cbcfe6049bc452c0b34dd))
+
+- **dittobench**: Add v9 trusted inference and embedding ablations
+  ([#582](https://github.com/ditto-assistant/ditto-subnet/pull/582),
+  [`e2b7b14`](https://github.com/ditto-assistant/ditto-subnet/commit/e2b7b140ef18c81209e7a0e032a715a8cd82bdb6))
+
+- **dittobench**: Blind v9 harness metadata
+  ([#579](https://github.com/ditto-assistant/ditto-subnet/pull/579),
+  [`c934abe`](https://github.com/ditto-assistant/ditto-subnet/commit/c934abea408887ff0dce8d1d9dbf1ac339ad569d))
+
+- **dittobench**: Publish v9 model, tool, and reasoning gates
+  ([#580](https://github.com/ditto-assistant/ditto-subnet/pull/580),
+  [`c7b0f27`](https://github.com/ditto-assistant/ditto-subnet/commit/c7b0f274455c6e7ab23fcd552e0c21260a7b43fd))
+
+- **dittobench**: Run bounded v9 top-N confirmation
+  ([#583](https://github.com/ditto-assistant/ditto-subnet/pull/583),
+  [`e19d3b4`](https://github.com/ditto-assistant/ditto-subnet/commit/e19d3b4b09b55069eef77a7b036aa6e033b72481))
+
+
 ## v0.48.6 (2026-08-10)
 
 ### Bug Fixes
