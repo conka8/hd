@@ -2,6 +2,31 @@
 
 <!-- version list -->
 
+## v0.48.5 (2026-08-10)
+
+### Bug Fixes
+
+- **infra**: Permit MIG autoscaler read
+  ([#592](https://github.com/ditto-assistant/ditto-subnet/pull/592),
+  [`5e2bfb1`](https://github.com/ditto-assistant/ditto-subnet/commit/5e2bfb1ba259d87e2b8ca9b0bcef7ef6b77d6f60))
+
+- **infra**: Separate autoscaler list binding
+  ([#593](https://github.com/ditto-assistant/ditto-subnet/pull/593),
+  [`2c27048`](https://github.com/ditto-assistant/ditto-subnet/commit/2c27048e1251a0b10f4325bb2c60ec6268914062))
+
+- **infra**: Use valid MIG permissions
+  ([#590](https://github.com/ditto-assistant/ditto-subnet/pull/590),
+  [`20f9c7e`](https://github.com/ditto-assistant/ditto-subnet/commit/20f9c7eebd090527116afa607409b1f462d8ff47))
+
+- **platform**: Inject controller bearer
+  ([#591](https://github.com/ditto-assistant/ditto-subnet/pull/591),
+  [`8ab4c4b`](https://github.com/ditto-assistant/ditto-subnet/commit/8ab4c4b9bf394e3e0f505d5c738e9c1dbba92498))
+
+- **screener**: Hand off autoscaler during resize
+  ([#594](https://github.com/ditto-assistant/ditto-subnet/pull/594),
+  [`22825a7`](https://github.com/ditto-assistant/ditto-subnet/commit/22825a7836c9ddbb883fe00ef3e2f9ccdbfe8a82))
+
+
 ## v0.48.4 (2026-08-10)
 
 ### Bug Fixes
