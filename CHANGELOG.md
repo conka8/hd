@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.48.2 (2026-08-10)
+
+### Bug Fixes
+
+- **release**: Publish Docker-compatible runtime indexes
+  ([#586](https://github.com/ditto-assistant/ditto-subnet/pull/586),
+  [`aca43fc`](https://github.com/ditto-assistant/ditto-subnet/commit/aca43fca9d43f9bccd67d1dfe118476474d22f6d))
+
+
 ## v0.48.1 (2026-08-10)
 
 ### Bug Fixes
