@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.50.0 (2026-08-10)
+
+### Features
+
+- **dittobench**: Add one-command v9 practice
+  ([#605](https://github.com/ditto-assistant/ditto-subnet/pull/605),
+  [`08dd75d`](https://github.com/ditto-assistant/ditto-subnet/commit/08dd75db09bef9cf90b36630d67c901a18334b7b))
+
+
 ## v0.49.2 (2026-08-10)
 
 ### Bug Fixes
