@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.48.6 (2026-08-10)
+
+### Bug Fixes
+
+- **screener**: Deploy checkout as owner
+  ([#595](https://github.com/ditto-assistant/ditto-subnet/pull/595),
+  [`2341743`](https://github.com/ditto-assistant/ditto-subnet/commit/2341743f96f23d755f23d51644a1c7e78623e113))
+
+
 ## v0.48.5 (2026-08-10)
 
 ### Bug Fixes
