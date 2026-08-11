@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.51.0 (2026-08-11)
+
+### Features
+
+- **screener**: Build miner submissions on Targon
+  ([#608](https://github.com/ditto-assistant/ditto-subnet/pull/608),
+  [`a52462f`](https://github.com/ditto-assistant/ditto-subnet/commit/a52462f34e150d9ed08c9d5655314787b216836e))
+
+
 ## v0.50.1 (2026-08-11)
 
 ### Bug Fixes
