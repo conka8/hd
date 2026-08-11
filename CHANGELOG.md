@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.51.6 (2026-08-11)
+
+### Bug Fixes
+
+- **platform**: Unblock v8 v9 inference grants
+  ([#614](https://github.com/ditto-assistant/ditto-subnet/pull/614),
+  [`775a4af`](https://github.com/ditto-assistant/ditto-subnet/commit/775a4af47eea30cdde08e724ec66fb032dbb3524))
+
+
 ## v0.51.5 (2026-08-11)
 
 ### Bug Fixes
