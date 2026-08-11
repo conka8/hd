@@ -2,6 +2,18 @@
 
 <!-- version list -->
 
+## v0.51.2 (2026-08-11)
+
+### Bug Fixes
+
+- **dittobench**: Preserve v8 tool observation
+  ([#607](https://github.com/ditto-assistant/ditto-subnet/pull/607),
+  [`d7cd56b`](https://github.com/ditto-assistant/ditto-subnet/commit/d7cd56b9322f7762b7920f4a8e5df23b924c3ff4))
+
+- **release**: Serialize Targon builder rollout
+  ([`81cf41e`](https://github.com/ditto-assistant/ditto-subnet/commit/81cf41e5b4ecbfe913ee769c065c33d735f8c18f))
+
+
 ## v0.51.1 (2026-08-11)
 
 ### Bug Fixes
