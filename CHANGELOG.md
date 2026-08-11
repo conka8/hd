@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.51.1 (2026-08-11)
+
+### Bug Fixes
+
+- **platform**: Install remote build protocol
+  ([#609](https://github.com/ditto-assistant/ditto-subnet/pull/609),
+  [`09ce1f9`](https://github.com/ditto-assistant/ditto-subnet/commit/09ce1f961c5c10256bfb63b49282b3a5b1b2020c))
+
+
 ## v0.51.0 (2026-08-11)
 
 ### Features
