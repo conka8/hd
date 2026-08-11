@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.50.1 (2026-08-11)
+
+### Bug Fixes
+
+- **platform**: Ship benchmark v9 rollout contract
+  ([#606](https://github.com/ditto-assistant/ditto-subnet/pull/606),
+  [`626521a`](https://github.com/ditto-assistant/ditto-subnet/commit/626521a66a21d7f8f7634c2b2fd788bf64a17113))
+
+
 ## v0.50.0 (2026-08-10)
 
 ### Features
