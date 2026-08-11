@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.53.2 (2026-08-11)
+
+### Bug Fixes
+
+- **dittobench**: Settle v9 case attribution
+  ([#637](https://github.com/ditto-assistant/ditto-subnet/pull/637),
+  [`782a641`](https://github.com/ditto-assistant/ditto-subnet/commit/782a6414b5547b8d410225c6e5988ec7e25c785a))
+
+- **platform**: Require the repaired v9 scorer
+  ([#636](https://github.com/ditto-assistant/ditto-subnet/pull/636),
+  [`95131df`](https://github.com/ditto-assistant/ditto-subnet/commit/95131dfa194876e1701a7b333460df49e9ef19af))
+
+
 ## v0.53.1 (2026-08-11)
 
 ### Bug Fixes
