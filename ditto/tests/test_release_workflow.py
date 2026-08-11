@@ -221,7 +221,8 @@ def test_release_uses_the_root_projects_minimum_python() -> None:
 
 def test_screener_runner_fallback_requires_platform_authorization() -> None:
     workflow = yaml.safe_load(RELEASE_WORKFLOW_PATH.read_text())
-    steps = workflow["jobs"]["build-screener"]["steps"]
+    job = workflow["jobs"]["build-screener"]
+    steps = job["steps"]
     request = _step(steps, "Ask Platform for a Targon Kaniko build")
     fallback = _step(steps, "Build on the existing runner when Targon is unavailable")
     record = _step(steps, "Record immutable screener image identity")
@@ -236,6 +237,14 @@ def test_screener_runner_fallback_requires_platform_authorization() -> None:
     assert "gcloud artifacts docker images describe" in record["run"]
     assert '"$digest" != "$TARGON_DIGEST"' in record["run"]
     assert "--retry-all-errors" in record["run"]
+    assert job["needs"] == [
+        "plan",
+        "release",
+        "deploy_platform",
+        "deploy-screener-controller",
+    ]
+    assert "needs.deploy-screener-controller.result == 'success'" in job["if"]
+    assert "needs.deploy-screener-controller.result == 'skipped'" in job["if"]
 
 
 def test_submission_builder_is_immutable_and_gates_controller_deploy() -> None:
