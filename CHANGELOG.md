@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.51.3 (2026-08-11)
+
+### Bug Fixes
+
+- **dittobench**: Restore versioned platform embeddings
+  ([#610](https://github.com/ditto-assistant/ditto-subnet/pull/610),
+  [`59be721`](https://github.com/ditto-assistant/ditto-subnet/commit/59be721fae127aada5ec332d2a888a3cd59e2baf))
+
+
 ## v0.51.2 (2026-08-11)
 
 ### Bug Fixes
