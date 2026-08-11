@@ -435,11 +435,15 @@ jobs:
     secrets: inherit
 
   build-screener:
-    needs: [plan, release, deploy_platform]
+    # A controller deploy restarts the single-writer image-builder service.
+    # Finish that rollout before queuing a trusted Targon build so the restart
+    # cannot orphan the rental behind its 45-minute Platform lease.
+    needs: [plan, release, deploy_platform, deploy-screener-controller]
     if: >-
       always() &&
       needs.release.outputs.released == 'true' &&
       needs.plan.outputs.screener == 'true' &&
+      (needs.deploy-screener-controller.result == 'success' || needs.deploy-screener-controller.result == 'skipped') &&
       (needs.deploy_platform.result == 'success' || needs.deploy_platform.result == 'skipped')
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 90
