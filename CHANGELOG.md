@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.51.7 (2026-08-11)
+
+### Bug Fixes
+
+- **dittobench**: Persist v9 private projections
+  ([#615](https://github.com/ditto-assistant/ditto-subnet/pull/615),
+  [`0beb2c8`](https://github.com/ditto-assistant/ditto-subnet/commit/0beb2c8bfd61ccb980461e618621048b343bbba1))
+
+
 ## v0.51.6 (2026-08-11)
 
 ### Bug Fixes
