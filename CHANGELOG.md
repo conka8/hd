@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.51.5 (2026-08-11)
+
+### Bug Fixes
+
+- **platform**: Make v9 rollout preflight truthful
+  ([#613](https://github.com/ditto-assistant/ditto-subnet/pull/613),
+  [`ee967a6`](https://github.com/ditto-assistant/ditto-subnet/commit/ee967a642b0dc362067bfd5d17e564f4472f23d4))
+
+
 ## v0.51.4 (2026-08-11)
 
 ### Bug Fixes
