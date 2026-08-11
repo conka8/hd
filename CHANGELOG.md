@@ -2,6 +2,23 @@
 
 <!-- version list -->
 
+## v0.53.1 (2026-08-11)
+
+### Bug Fixes
+
+- **dittobench**: Preserve zero v9 score evidence
+  ([#633](https://github.com/ditto-assistant/ditto-subnet/pull/633),
+  [`c2f3b07`](https://github.com/ditto-assistant/ditto-subnet/commit/c2f3b07e9ca9897358e3f93e6adac0bba0082aaf))
+
+- **platform**: Release ATH holds stranded by a reopened copy review
+  ([#634](https://github.com/ditto-assistant/ditto-subnet/pull/634),
+  [`f21fa75`](https://github.com/ditto-assistant/ditto-subnet/commit/f21fa754215d5949f2f23f0213330f456b97f8af))
+
+- **screener**: Harden Targon build fallback
+  ([#635](https://github.com/ditto-assistant/ditto-subnet/pull/635),
+  [`f8544bb`](https://github.com/ditto-assistant/ditto-subnet/commit/f8544bbe2223ed78dc743041fea9fb6db219766d))
+
+
 ## v0.53.0 (2026-08-11)
 
 ### Bug Fixes
