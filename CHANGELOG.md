@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v0.53.0 (2026-08-11)
+
+### Bug Fixes
+
+- **backroom**: Distinguish rollout membership from scoring
+  ([#631](https://github.com/ditto-assistant/ditto-subnet/pull/631),
+  [`09f1782`](https://github.com/ditto-assistant/ditto-subnet/commit/09f1782d367bf65e82e229c1d1510d8675f7a33c))
+
+- **backroom**: Surface rollout target reviews
+  ([#627](https://github.com/ditto-assistant/ditto-subnet/pull/627),
+  [`438aa9d`](https://github.com/ditto-assistant/ditto-subnet/commit/438aa9d355e1bfbf58d1cbdea473d18b17df130c))
+
+- **platform**: Keep deferred health failures retryable
+  ([#629](https://github.com/ditto-assistant/ditto-subnet/pull/629),
+  [`2515fc3`](https://github.com/ditto-assistant/ditto-subnet/commit/2515fc307d267622d29d24659fa892e433f5c964))
+
+- **platform**: Repair held v9 score gates
+  ([#632](https://github.com/ditto-assistant/ditto-subnet/pull/632),
+  [`18955a1`](https://github.com/ditto-assistant/ditto-subnet/commit/18955a179059631025636d7a72381b672241a35a))
+
+### Features
+
+- **backroom**: Batch recover stuck validation work
+  ([#628](https://github.com/ditto-assistant/ditto-subnet/pull/628),
+  [`815ad29`](https://github.com/ditto-assistant/ditto-subnet/commit/815ad29ee6234c94f2b50470ef58b94c63f405e4))
+
+
 ## v0.52.1 (2026-08-11)
 
 ### Bug Fixes
