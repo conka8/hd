@@ -2,6 +2,41 @@
 
 <!-- version list -->
 
+## v0.52.0 (2026-08-11)
+
+### Bug Fixes
+
+- **dittobench**: Enforce v9 semantic evidence
+  ([#621](https://github.com/ditto-assistant/ditto-subnet/pull/621),
+  [`b0941c7`](https://github.com/ditto-assistant/ditto-subnet/commit/b0941c711f8e11f3e49f7cc28339dbfea3c158fc))
+
+- **platform**: Gate v9 authority on semantic evidence
+  ([#617](https://github.com/ditto-assistant/ditto-subnet/pull/617),
+  [`b300619`](https://github.com/ditto-assistant/ditto-subnet/commit/b30061926d41a53c35e5fb33cdb0d88ab8f37de6))
+
+- **platform**: Queue authoritative v9 score retests
+  ([#622](https://github.com/ditto-assistant/ditto-subnet/pull/622),
+  [`3c28d54`](https://github.com/ditto-assistant/ditto-subnet/commit/3c28d54633bad416e6eb1cdd9c528ef4d3091699))
+
+- **screener**: Give Targon builds a real timeout
+  ([#620](https://github.com/ditto-assistant/ditto-subnet/pull/620),
+  [`5360d55`](https://github.com/ditto-assistant/ditto-subnet/commit/5360d55f1dbbb39f610f8d31a22b6ec6277db624))
+
+### Features
+
+- Add Backroom submission triage skill
+  ([#616](https://github.com/ditto-assistant/ditto-subnet/pull/616),
+  [`7682298`](https://github.com/ditto-assistant/ditto-subnet/commit/76822985a21eaa9e59e06158dbe048a919d794f8))
+
+- **platform**: Show Targon submission builds
+  ([#618](https://github.com/ditto-assistant/ditto-subnet/pull/618),
+  [`49c7e2a`](https://github.com/ditto-assistant/ditto-subnet/commit/49c7e2a942d6b1f0f88825e354e4304aad9ab294))
+
+- **screener**: Control L3 review independently
+  ([#619](https://github.com/ditto-assistant/ditto-subnet/pull/619),
+  [`d442555`](https://github.com/ditto-assistant/ditto-subnet/commit/d442555b76ae47c247f7e7ffff552c6f16d7e52b))
+
+
 ## v0.51.7 (2026-08-11)
 
 ### Bug Fixes
