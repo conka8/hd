@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.51.4 (2026-08-11)
+
+### Bug Fixes
+
+- **dittobench**: Inherit v9 execution boundaries
+  ([#612](https://github.com/ditto-assistant/ditto-subnet/pull/612),
+  [`34d4fa7`](https://github.com/ditto-assistant/ditto-subnet/commit/34d4fa74bc2737c4d07ddbc0f2d56ca797054c62))
+
+
 ## v0.51.3 (2026-08-11)
 
 ### Bug Fixes
