@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.52.1 (2026-08-11)
+
+### Bug Fixes
+
+- **platform**: Dispatch v9 contract retests during rollout
+  ([#625](https://github.com/ditto-assistant/ditto-subnet/pull/625),
+  [`5959c9c`](https://github.com/ditto-assistant/ditto-subnet/commit/5959c9c5d390d6b7ff17b4452ca43cd94dd510ec))
+
+- **platform**: Reserve concurrent rollout lane positions
+  ([#624](https://github.com/ditto-assistant/ditto-subnet/pull/624),
+  [`0e197ab`](https://github.com/ditto-assistant/ditto-subnet/commit/0e197abda2daf46c12395bd16a954727d2cf0800))
+
+
 ## v0.52.0 (2026-08-11)
 
 ### Bug Fixes
