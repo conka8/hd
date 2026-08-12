@@ -2,6 +2,23 @@
 
 <!-- version list -->
 
+## v0.53.6 (2026-08-12)
+
+### Bug Fixes
+
+- **dittobench**: Bind v9 attribution to case generations
+  ([#646](https://github.com/ditto-assistant/ditto-subnet/pull/646),
+  [`76003c1`](https://github.com/ditto-assistant/ditto-subnet/commit/76003c173ed3e90d54eedbea00600d98516584f9))
+
+- **platform**: Show v8 and v9 memory timeline
+  ([#645](https://github.com/ditto-assistant/ditto-subnet/pull/645),
+  [`fb922f2`](https://github.com/ditto-assistant/ditto-subnet/commit/fb922f26bc457b96168f0970a2210021e99d4723))
+
+- **platform-dashboard**: Compact operations workspace
+  ([#644](https://github.com/ditto-assistant/ditto-subnet/pull/644),
+  [`5633557`](https://github.com/ditto-assistant/ditto-subnet/commit/5633557aaebe967022482accc0c2c1aa951f77cf))
+
+
 ## v0.53.5 (2026-08-12)
 
 ### Bug Fixes
