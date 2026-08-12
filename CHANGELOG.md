@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.53.5 (2026-08-12)
+
+### Bug Fixes
+
+- **dittobench**: Keep v9 attribution windows open
+  ([#641](https://github.com/ditto-assistant/ditto-subnet/pull/641),
+  [`84fa379`](https://github.com/ditto-assistant/ditto-subnet/commit/84fa379907cc01fbdeb183e5b88114d02e00a9f0))
+
+- **platform**: Require complete v9 attribution
+  ([#642](https://github.com/ditto-assistant/ditto-subnet/pull/642),
+  [`bd0bdb8`](https://github.com/ditto-assistant/ditto-subnet/commit/bd0bdb8f8f1d1b47b5b2694cbbc62cccfe4ce787))
+
+
 ## v0.53.4 (2026-08-12)
 
 ### Bug Fixes
