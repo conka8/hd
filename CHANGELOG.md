@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.53.8 (2026-08-12)
+
+### Bug Fixes
+
+- **dittobench**: Exclude unfinished v9 attribution tails
+  ([#648](https://github.com/ditto-assistant/ditto-subnet/pull/648),
+  [`87b9869`](https://github.com/ditto-assistant/ditto-subnet/commit/87b98690120ef921ee7087d3efc09450249b84ab))
+
+
 ## v0.53.7 (2026-08-12)
 
 ### Bug Fixes
