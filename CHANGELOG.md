@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.53.4 (2026-08-12)
+
+### Bug Fixes
+
+- **platform**: Bind v9 retests to the v9 era
+  ([#640](https://github.com/ditto-assistant/ditto-subnet/pull/640),
+  [`422bf22`](https://github.com/ditto-assistant/ditto-subnet/commit/422bf225da3eb1cdbe2f9385b78b295f45159b4e))
+
+
 ## v0.53.3 (2026-08-12)
 
 ### Bug Fixes
