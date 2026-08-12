@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.53.13 (2026-08-12)
+
+### Bug Fixes
+
+- **platform**: Fill v9 contract repair slots
+  ([#654](https://github.com/ditto-assistant/ditto-subnet/pull/654),
+  [`781c95b`](https://github.com/ditto-assistant/ditto-subnet/commit/781c95bc9050b57202863e76d09cc91c3428c545))
+
+- **screener**: Clean up Targon build rentals
+  ([#649](https://github.com/ditto-assistant/ditto-subnet/pull/649),
+  [`5097b1a`](https://github.com/ditto-assistant/ditto-subnet/commit/5097b1ad1c51366e2d416800fb7d33c10bcee792))
+
+
 ## v0.53.12 (2026-08-12)
 
 ### Bug Fixes
