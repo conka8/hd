@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.53.7 (2026-08-12)
+
+### Bug Fixes
+
+- **platform**: Require generation-bound v9 scorers
+  ([#647](https://github.com/ditto-assistant/ditto-subnet/pull/647),
+  [`ad1a55c`](https://github.com/ditto-assistant/ditto-subnet/commit/ad1a55c4addd5a1d9d4b39878d2d85ca96be1657))
+
+
 ## v0.53.6 (2026-08-12)
 
 ### Bug Fixes
