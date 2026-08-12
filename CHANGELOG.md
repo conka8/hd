@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.53.11 (2026-08-12)
+
+### Bug Fixes
+
+- **platform**: Gate every v9 rollout lane
+  ([#652](https://github.com/ditto-assistant/ditto-subnet/pull/652),
+  [`cb45e86`](https://github.com/ditto-assistant/ditto-subnet/commit/cb45e86e7e1980e1d07ed6b8cef7763181c43537))
+
+
 ## v0.53.10 (2026-08-12)
 
 ### Bug Fixes
