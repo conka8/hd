@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.53.9 (2026-08-12)
+
+### Bug Fixes
+
+- **platform**: Require tail-safe v9 scorers
+  ([`fdb1132`](https://github.com/ditto-assistant/ditto-subnet/commit/fdb113222b358b4bc87327b8948eef74cad7049d))
+
+
 ## v0.53.8 (2026-08-12)
 
 ### Bug Fixes
