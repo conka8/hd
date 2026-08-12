@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.53.10 (2026-08-12)
+
+### Bug Fixes
+
+- **dittobench**: Preserve v9 attribution order
+  ([`6402642`](https://github.com/ditto-assistant/ditto-subnet/commit/6402642061b476d029aeca6ce85f332cae79cffd))
+
+
 ## v0.53.9 (2026-08-12)
 
 ### Bug Fixes
