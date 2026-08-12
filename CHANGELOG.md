@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.53.17 (2026-08-12)
+
+### Bug Fixes
+
+- **platform**: Preserve embedding provider backpressure
+  ([#661](https://github.com/ditto-assistant/ditto-subnet/pull/661),
+  [`ef6e638`](https://github.com/ditto-assistant/ditto-subnet/commit/ef6e638affce64859c15f1968431b41e9aab85a6))
+
+
 ## v0.53.16 (2026-08-12)
 
 ### Bug Fixes
