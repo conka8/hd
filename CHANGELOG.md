@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.53.12 (2026-08-12)
+
+### Bug Fixes
+
+- **platform**: Requeue failed v9 score repairs
+  ([#653](https://github.com/ditto-assistant/ditto-subnet/pull/653),
+  [`2280bfd`](https://github.com/ditto-assistant/ditto-subnet/commit/2280bfda9088e94e768ec7a25917dda52519ce45))
+
+
 ## v0.53.11 (2026-08-12)
 
 ### Bug Fixes
