@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.53.18 (2026-08-12)
+
+### Bug Fixes
+
+- **dittobench**: Wait out embedding provider throttle
+  ([#666](https://github.com/ditto-assistant/ditto-subnet/pull/666),
+  [`3bdf424`](https://github.com/ditto-assistant/ditto-subnet/commit/3bdf424d1d8049fa25839523c95bd6ce30ac3d69))
+
+
 ## v0.53.17 (2026-08-12)
 
 ### Bug Fixes
