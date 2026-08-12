@@ -1160,6 +1160,13 @@ async def _issue_source_backfill_ticket(
     still count. That is the ONLY case this lane serves now -- see the floor
     below.
     """
+    # Both previous-generation lanes answer to the same master switch. The
+    # adopted-carryover helper already enforced it, but source-era backfill did
+    # not, so `enabled=false` still issued ordinary v8 work during the v9
+    # rollout. Check before resumption and new admission alike: an operator who
+    # turns this policy off is closing the whole previous-generation lane.
+    if not carryover_settings.enabled:
+        return None
     # The floor, checked before anything else and before the resume path.
     #
     # Two separate conditions, because they fail for different reasons and one
@@ -2733,6 +2740,7 @@ async def request_job(
                     slot_id=slot_id,
                     required_basis=V9_CONTRACT_RETEST_BASIS,
                     allow_parallel_ordinary=True,
+                    allow_parallel_contract_retests=True,
                 )
                 if target_benchmark_ready
                 else None
@@ -2864,11 +2872,14 @@ async def request_job(
                 )
         else:
             ticket = None
-        if ticket is None:
-            # During an open rollout, a source-version validator may resume a
-            # source-version lease. Once activation completes, only the active
-            # benchmark era is resumable; retired tickets must never leak back
-            # into the queue ahead of the capability gate below.
+        if ticket is None and rollout is None:
+            # Resume only the active benchmark when there is no open rollout.
+            # An open rollout is an exclusive desired-era transition: the v9
+            # lanes above either issue v9 or intentionally return no work.
+            # Resuming the still-active source era here bypassed every
+            # carryover/drain control and let old v8 repairs consume slots while
+            # v9 was collecting. Existing source tickets remain in the ledger
+            # and age out naturally; they are never re-leased during rollout.
             live_ticket_statement = (
                 select(ValidatorTicket)
                 .join(Agent, Agent.agent_id == ValidatorTicket.agent_id)
@@ -2894,7 +2905,7 @@ async def request_job(
                     Agent.screened_image_upload_id.is_not(None),
                     Agent.screened_image_verified_at.is_not(None),
                 )
-            if rollout is not None and slot_running_benchmark:
+            if slot_running_benchmark:
                 ticket = await session.scalar(live_ticket_statement)
         if ticket is None:
             if rollout is None and source_backfill_rollout is not None:
