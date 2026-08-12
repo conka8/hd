@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.53.3 (2026-08-12)
+
+### Bug Fixes
+
+- **platform**: Retry defective v9 attribution evidence
+  ([#639](https://github.com/ditto-assistant/ditto-subnet/pull/639),
+  [`973affd`](https://github.com/ditto-assistant/ditto-subnet/commit/973affd482b715165d3b00887aec66db34cdd7f8))
+
+
 ## v0.53.2 (2026-08-11)
 
 ### Bug Fixes
