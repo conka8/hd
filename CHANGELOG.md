@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.53.16 (2026-08-12)
+
+### Bug Fixes
+
+- **dittobench**: Serve versioned practice datasets
+  ([#663](https://github.com/ditto-assistant/ditto-subnet/pull/663),
+  [`a9c589d`](https://github.com/ditto-assistant/ditto-subnet/commit/a9c589dd6dd95f12bd4f96cdf030d21e7cbc4e4e))
+
+- **validator**: Follow active benchmark authority
+  ([#662](https://github.com/ditto-assistant/ditto-subnet/pull/662),
+  [`462b7e7`](https://github.com/ditto-assistant/ditto-subnet/commit/462b7e7116bcd3c2e5b66d40d9a99682c9439ff3))
+
+
 ## v0.53.15 (2026-08-12)
 
 ### Bug Fixes
