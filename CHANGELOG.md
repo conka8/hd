@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.53.19 (2026-08-12)
+
+### Bug Fixes
+
+- **dittobench**: Retry hosted embedding preflight
+  ([#667](https://github.com/ditto-assistant/ditto-subnet/pull/667),
+  [`806c1cc`](https://github.com/ditto-assistant/ditto-subnet/commit/806c1cc36b098818cf76ca72b5fce0528c46e438))
+
+
 ## v0.53.18 (2026-08-12)
 
 ### Bug Fixes
