@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -334,6 +335,46 @@ func TestTranscriptCanonicalOrderIndependent(t *testing.T) {
 	}
 	if len(shaA) != 64 {
 		t.Fatalf("digest is not sha256 hex: %q", shaA)
+	}
+}
+
+func TestTranscriptCanonicalBytesDoesNotReorderV9AttributionEvidence(t *testing.T) {
+	perCase := []protocol.CaseScore{{CaseID: "z-case"}, {CaseID: "a-case"}}
+	transcripts := []transcriptCase{
+		{
+			CaseID: "z-case",
+			Execution: runner.CaseExecution{
+				ModelAttributionComplete: true,
+				ModelInferenceObserved:   true,
+			},
+		},
+		{
+			CaseID: "a-case",
+			Execution: runner.CaseExecution{
+				ModelAttributionComplete: true,
+			},
+		},
+	}
+	artifact := transcriptArtifact{
+		RunID: "run-v9-order", BenchVersion: protocol.BenchVersionV9,
+		DatasetSHA256: strings.Repeat("a", 64), Cases: transcripts,
+	}
+	_, body, err := artifact.canonicalBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var canonical transcriptArtifact
+	if err := json.Unmarshal(body, &canonical); err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{canonical.Cases[0].CaseID, canonical.Cases[1].CaseID}; !reflect.DeepEqual(got, []string{"a-case", "z-case"}) {
+		t.Fatalf("canonical artifact was not sorted: %v", got)
+	}
+	if got := []string{transcripts[0].CaseID, transcripts[1].CaseID}; !reflect.DeepEqual(got, []string{"z-case", "a-case"}) {
+		t.Fatalf("canonicalization reordered live attribution evidence: %v", got)
+	}
+	if complete, successful := v9DistinctModelCases(perCase, transcripts); !complete || successful != 1 {
+		t.Fatalf("post-hash v9 attribution = complete %t, successful %d", complete, successful)
 	}
 }
 
