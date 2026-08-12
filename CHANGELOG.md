@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.53.14 (2026-08-12)
+
+### Bug Fixes
+
+- **dittobench**: Prove v9 zero-model runs
+  ([#655](https://github.com/ditto-assistant/ditto-subnet/pull/655),
+  [`f3caa9a`](https://github.com/ditto-assistant/ditto-subnet/commit/f3caa9a6f240b6546cf188b4b87ec72a799bc132))
+
+- **platform**: Let completed v9 failures yield authority
+  ([#656](https://github.com/ditto-assistant/ditto-subnet/pull/656),
+  [`b429102`](https://github.com/ditto-assistant/ditto-subnet/commit/b4291023a372c99641f9dc5704ad19c5ff1b41d8))
+
+
 ## v0.53.13 (2026-08-12)
 
 ### Bug Fixes
