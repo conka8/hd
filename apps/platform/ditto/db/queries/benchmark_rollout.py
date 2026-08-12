@@ -99,14 +99,14 @@ DEFAULT_RESCORE_COHORT_SIZE = 10
 # created by an older deployment still finishes without member deletion.
 MAX_PERSISTED_RESCORE_COHORT_SIZE = 25
 SCORING_QUORUM = 3
-# Bench v9 requires generation-bound per-case model attribution with unfinished
-# request tails excluded, shipped in v0.53.8. v0.53.6 and v0.53.7 can reject a
-# valid case when ``/run`` returns after the relay admits a request but before
-# its request counter advances. Leasing replacement v9 work to an older scorer
-# would reproduce that incident. This is a semantic capability floor, not the
-# active release version: v8 remains compatible and every later scorer release
-# continues to satisfy it.
-_V9_MINIMUM_SCORER_VERSION = (0, 53, 8)
+# Bench v9 requires transcript canonicalization that does not reorder the live
+# per-case attribution slice, shipped in v0.53.10. v0.53.8/v0.53.9 correctly
+# isolate unfinished request tails, but their in-place canonical sort makes the
+# scorer's dataset order diverge from the transcript order at finalization.
+# Leasing replacement v9 work to an older scorer would recycle the full run.
+# This is a semantic capability floor, not the active release version: v8
+# remains compatible and every later scorer release continues to satisfy it.
+_V9_MINIMUM_SCORER_VERSION = (0, 53, 10)
 # How many agents must hold a COMPLETE, ranked desired-version quorum before
 # the desired version may take over. Two gates enforce it against the same count
 # (``ditto.db.queries.scores.count_ranked_quorum_agents``): the ledger's

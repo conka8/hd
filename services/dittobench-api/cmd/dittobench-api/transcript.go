@@ -199,6 +199,13 @@ func writeAll(writer io.Writer, body []byte) error {
 // SHA-256 hex digest. Cases are sorted by case_id so the bytes are independent
 // of per-case completion order under bounded concurrency.
 func (a transcriptArtifact) canonicalBytes() (string, []byte, error) {
+	// A is passed by value, but Cases is a slice header: sorting it directly
+	// mutates the caller's backing array. The scored path hashes the transcript
+	// immediately before it binds per-case model attribution to the scorer's
+	// dataset order, so that mutation made every non-canonically ordered v9 run
+	// look as if its evidence belonged to different cases. Sort a clone for the
+	// canonical artifact and leave the live scoring evidence untouched.
+	a.Cases = append([]transcriptCase(nil), a.Cases...)
 	sort.Slice(a.Cases, func(i, j int) bool { return a.Cases[i].CaseID < a.Cases[j].CaseID })
 	a.Execution = summarizeExecution(a.Cases)
 	body, err := json.Marshal(a)
