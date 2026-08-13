@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.53.23 (2026-08-13)
+
+### Bug Fixes
+
+- **platform**: Stop holding miners for source the subnet published
+  ([#670](https://github.com/ditto-assistant/ditto-subnet/pull/670),
+  [`4dc47b8`](https://github.com/ditto-assistant/ditto-subnet/commit/4dc47b82c989f950e83f0d206b896950b8600fc1))
+
+
 ## v0.53.22 (2026-08-13)
 
 ### Bug Fixes
