@@ -2,6 +2,47 @@
 
 <!-- version list -->
 
+## v0.54.0 (2026-08-13)
+
+### Bug Fixes
+
+- **ci**: Restore GitHub-hosted release runners
+  ([`751c56b`](https://github.com/ditto-assistant/ditto-subnet/commit/751c56b2549a18ad152dd66b471c5c0ca9a15e84))
+
+- **platform**: Exclude stock starter-kit files from anti-copy fingerprints
+  ([#659](https://github.com/ditto-assistant/ditto-subnet/pull/659),
+  [`2e6548d`](https://github.com/ditto-assistant/ditto-subnet/commit/2e6548d9e3050c8a3286fa2fe878b74f4b37b8fd))
+
+- **platform**: Make a held KOTH crown visually obvious on the board
+  ([#674](https://github.com/ditto-assistant/ditto-subnet/pull/674),
+  [`760517d`](https://github.com/ditto-assistant/ditto-subnet/commit/760517d35d83b81d258328c91b19d9edbb41c2ad))
+
+- **platform**: Make the review queue return the review queue
+  ([#678](https://github.com/ditto-assistant/ditto-subnet/pull/678),
+  [`14b6dee`](https://github.com/ditto-assistant/ditto-subnet/commit/14b6dee1848d9138946bdcd9dfe91d4e749d7689))
+
+- **platform**: Name the earliest source in a copy hold, not the nearest
+  ([#676](https://github.com/ditto-assistant/ditto-subnet/pull/676),
+  [`4a9b154`](https://github.com/ditto-assistant/ditto-subnet/commit/4a9b15498e1d5566d2f34f6890496365cb603772))
+
+- **validator**: Pay v9 scores before confirmation enforce
+  ([`ef67948`](https://github.com/ditto-assistant/ditto-subnet/commit/ef679489fbdf26f2283350a5bb2ecb489f7aff5a))
+
+- **validator**: Prove source scorer release identity
+  ([#673](https://github.com/ditto-assistant/ditto-subnet/pull/673),
+  [`27eb11c`](https://github.com/ditto-assistant/ditto-subnet/commit/27eb11c15f1f64e2f72a1b4a11b62abd519968bf))
+
+### Features
+
+- **platform**: Add a no-source-review queue policy mode
+  ([#665](https://github.com/ditto-assistant/ditto-subnet/pull/665),
+  [`e78b5ba`](https://github.com/ditto-assistant/ditto-subnet/commit/e78b5ba6bb578c80344da1bcfe267e1d2bb0715c))
+
+- **platform**: Search screened source in one request
+  ([#677](https://github.com/ditto-assistant/ditto-subnet/pull/677),
+  [`e228c3c`](https://github.com/ditto-assistant/ditto-subnet/commit/e228c3c2ef27aeb4015cae6a7cdad7436e7b72bd))
+
+
 ## v0.53.23 (2026-08-13)
 
 ### Bug Fixes
