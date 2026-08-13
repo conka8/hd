@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.53.22 (2026-08-13)
+
+### Bug Fixes
+
+- **platform**: Activate rollout on frozen priority cohort
+  ([#672](https://github.com/ditto-assistant/ditto-subnet/pull/672),
+  [`33cbf8d`](https://github.com/ditto-assistant/ditto-subnet/commit/33cbf8d043ddb21a5f8f26d2252833ac94e3dced))
+
+
 ## v0.53.21 (2026-08-13)
 
 ### Bug Fixes
