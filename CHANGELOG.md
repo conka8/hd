@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v0.56.0 (2026-08-13)
+
+### Bug Fixes
+
+- **backroom**: Return whole source manifests and report MCP paging
+  ([#669](https://github.com/ditto-assistant/ditto-subnet/pull/669),
+  [`e939520`](https://github.com/ditto-assistant/ditto-subnet/commit/e93952050bfa7a8dfd7b01df058d68f161123165))
+
+- **platform**: Keep ranked rows above alternate sorts
+  ([#691](https://github.com/ditto-assistant/ditto-subnet/pull/691),
+  [`30cff0e`](https://github.com/ditto-assistant/ditto-subnet/commit/30cff0e3e6992d8fd155da2dfbaa8da05eaeecbb))
+
+### Features
+
+- **backroom**: Control submission deposit address
+  ([#685](https://github.com/ditto-assistant/ditto-subnet/pull/685),
+  [`bd2381b`](https://github.com/ditto-assistant/ditto-subnet/commit/bd2381b029f1e0b53e39a885d50062766b980053))
+
+
 ## v0.55.0 (2026-08-13)
 
 ### Chores
