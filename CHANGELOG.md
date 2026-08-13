@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.56.3 (2026-08-13)
+
+### Bug Fixes
+
+- **platform**: Honor coherent source scorer identity
+  ([#705](https://github.com/ditto-assistant/ditto-subnet/pull/705),
+  [`6799e06`](https://github.com/ditto-assistant/ditto-subnet/commit/6799e06b5c02a201389373486178f0275c5eb815))
+
+
 ## v0.56.2 (2026-08-13)
 
 ### Bug Fixes
