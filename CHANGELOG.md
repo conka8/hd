@@ -2,6 +2,23 @@
 
 <!-- version list -->
 
+## v0.56.1 (2026-08-13)
+
+### Bug Fixes
+
+- **platform**: Bound public activity queries
+  ([#694](https://github.com/ditto-assistant/ditto-subnet/pull/694),
+  [`65af5f8`](https://github.com/ditto-assistant/ditto-subnet/commit/65af5f8305b92cbfdd602c934f567924237f8721))
+
+- **platform**: Serialize dispatch and bound nonce cleanup
+  ([#693](https://github.com/ditto-assistant/ditto-subnet/pull/693),
+  [`870d12f`](https://github.com/ditto-assistant/ditto-subnet/commit/870d12fcdd8b891e076796d2e81619698772e203))
+
+- **validator**: Recover stalled scorer infrastructure
+  ([#695](https://github.com/ditto-assistant/ditto-subnet/pull/695),
+  [`c0b4b58`](https://github.com/ditto-assistant/ditto-subnet/commit/c0b4b58362bca40ef31010d1610142ebe4b28e91))
+
+
 ## v0.56.0 (2026-08-13)
 
 ### Bug Fixes
