@@ -2,6 +2,41 @@
 
 <!-- version list -->
 
+## v0.57.0 (2026-08-13)
+
+### Bug Fixes
+
+- **backroom**: Accept null rank on public leaderboard rows
+  ([#708](https://github.com/ditto-assistant/ditto-subnet/pull/708),
+  [`08df572`](https://github.com/ditto-assistant/ditto-subnet/commit/08df5729fafdb4a8bcb19fa52f851dd8c2e87ffa))
+
+- **dittobench**: Harden validator embedding gateway
+  ([#709](https://github.com/ditto-assistant/ditto-subnet/pull/709),
+  [`7f4a241`](https://github.com/ditto-assistant/ditto-subnet/commit/7f4a241fb403151d28a2b1896b5ad23e643937dd))
+
+- **platform**: Average run cost over completed leases only
+  ([#710](https://github.com/ditto-assistant/ditto-subnet/pull/710),
+  [`e04a8e9`](https://github.com/ditto-assistant/ditto-subnet/commit/e04a8e98c953eb511d94ca693d6cbc75b20baf78))
+
+- **platform**: Restore v9 contract retest queue
+  ([#703](https://github.com/ditto-assistant/ditto-subnet/pull/703),
+  [`0d7f619`](https://github.com/ditto-assistant/ditto-subnet/commit/0d7f6197f5ef3d231e0308f8bc13babdb98c8d10))
+
+### Features
+
+- **dittobench**: Proxy LongMem inference through Platform
+  ([#699](https://github.com/ditto-assistant/ditto-subnet/pull/699),
+  [`ef68c2d`](https://github.com/ditto-assistant/ditto-subnet/commit/ef68c2d14d48ba4fa773cc4e3e7b37bd830ae92f))
+
+- **platform**: Select LongMemEval by base score
+  ([#698](https://github.com/ditto-assistant/ditto-subnet/pull/698),
+  [`5cf637d`](https://github.com/ditto-assistant/ditto-subnet/commit/5cf637d0e781954215f0f2ff745c9448958dc0ba))
+
+- **validator**: Isolate LongMem execution capacity
+  ([#700](https://github.com/ditto-assistant/ditto-subnet/pull/700),
+  [`11c16e6`](https://github.com/ditto-assistant/ditto-subnet/commit/11c16e616d4bcef6d43d70865cb7e2fed27f0172))
+
+
 ## v0.56.4 (2026-08-13)
 
 ### Bug Fixes
