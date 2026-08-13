@@ -203,6 +203,7 @@ platform_inference_reviewed_calibration_manifest_sha256: "b8c11eff829c4c85b4b1af
 # is the Secret Manager id of the shared bearer token.
 platform_screener_hotkey: ""
 secret_screener_api_token: ""
+secret_platform_perplexity_key: "PERPLEXITY_API_KEY"
 
 # Docker apt repo (Debian).
 platform_docker_apt_arch: amd64

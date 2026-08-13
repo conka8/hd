@@ -421,6 +421,28 @@ class TestInferenceRequestBudgetBound:
         assert config.inference_proxy.request_budget <= MAX_CHAT_REQUEST_BUDGET
         check_config(config)
 
+    def test_embedding_fallback_is_pinned_to_direct_perplexity(self):
+        config = make_api_server_config()
+        assert (
+            config.inference_proxy.embedding_fallback_url
+            == "https://api.perplexity.ai/v1/embeddings"
+        )
+        check_config(config)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://api.perplexity.ai/v1/embeddings",
+            "https://evil.example/v1/embeddings",
+            "https://api.perplexity.ai/v1/chat/completions",
+        ],
+    )
+    def test_embedding_fallback_refuses_unreviewed_egress(self, url: str):
+        config = make_api_server_config()
+        proxy = replace(config.inference_proxy, embedding_fallback_url=url)
+        with pytest.raises(ApiServerConfigError, match="Perplexity embeddings"):
+            check_config(replace(config, inference_proxy=proxy))
+
     def test_the_boot_check_rejects_exactly_what_the_board_rejects(self):
         config = make_api_server_config()
         over = replace(
