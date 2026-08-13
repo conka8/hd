@@ -81,6 +81,7 @@ class InferenceProxyConfig:
     required: bool
     public_base_url: str
     openrouter_api_key: str | None
+    perplexity_api_key: str | None
     upstream_url: str
     allowed_models: tuple[str, ...]
     provider: str
@@ -88,6 +89,7 @@ class InferenceProxyConfig:
     request_budget: int
     token_budget: int
     embedding_upstream_url: str
+    embedding_fallback_url: str
     embedding_model: str
     embedding_profile: str
     embedding_provider: str
@@ -260,6 +262,7 @@ class ApiServerConfig:
             required=False,
             public_base_url="http://localhost:8000",
             openrouter_api_key=None,
+            perplexity_api_key=None,
             upstream_url="https://openrouter.ai/api/v1/chat/completions",
             allowed_models=("qwen/qwen3-32b", "openai/gpt-oss-20b"),
             provider="nebius",
@@ -267,6 +270,7 @@ class ApiServerConfig:
             request_budget=DEFAULT_CHAT_REQUEST_BUDGET,
             token_budget=DEFAULT_CHAT_TOKEN_BUDGET,
             embedding_upstream_url="https://openrouter.ai/api/v1/embeddings",
+            embedding_fallback_url="https://api.perplexity.ai/v1/embeddings",
             embedding_model="perplexity/pplx-embed-v1-0.6b",
             embedding_profile="dittobench-v7-openrouter-pplx-embed-v1-0.6b-768-v1",
             embedding_provider="Perplexity",
@@ -433,6 +437,7 @@ def parse_api_server_config_from_env(commit_hash: str) -> ApiServerConfig:
                 "DITTO_INFERENCE_PUBLIC_BASE_URL", "http://localhost:8000"
             ).rstrip("/"),
             openrouter_api_key=os.environ.get("OPENROUTER_API_KEY") or None,
+            perplexity_api_key=os.environ.get("PERPLEXITY_API_KEY") or None,
             upstream_url=os.environ.get(
                 "DITTO_INFERENCE_UPSTREAM_URL",
                 "https://openrouter.ai/api/v1/chat/completions",
@@ -462,6 +467,10 @@ def parse_api_server_config_from_env(commit_hash: str) -> ApiServerConfig:
             embedding_upstream_url=os.environ.get(
                 "DITTO_EMBEDDING_UPSTREAM_URL",
                 "https://openrouter.ai/api/v1/embeddings",
+            ),
+            embedding_fallback_url=os.environ.get(
+                "DITTO_EMBEDDING_FALLBACK_URL",
+                "https://api.perplexity.ai/v1/embeddings",
             ),
             embedding_model=os.environ.get(
                 "DITTO_EMBEDDING_MODEL", "perplexity/pplx-embed-v1-0.6b"
@@ -796,6 +805,13 @@ def check_config(config: ApiServerConfig) -> None:
         or embedding_upstream.path != "/api/v1/embeddings"
     ):
         raise ApiServerConfigError("embedding upstream must be OpenRouter embeddings")
+    embedding_fallback = urlparse(inference.embedding_fallback_url)
+    if (
+        embedding_fallback.scheme != "https"
+        or embedding_fallback.hostname != "api.perplexity.ai"
+        or embedding_fallback.path != "/v1/embeddings"
+    ):
+        raise ApiServerConfigError("embedding fallback must be Perplexity embeddings")
     if (
         inference.embedding_model != "perplexity/pplx-embed-v1-0.6b"
         or inference.embedding_profile

@@ -181,6 +181,19 @@
   no_log: true
   when: platform_inference_proxy_enabled | bool
 
+- name: Read platform Perplexity key when ticket inference is enabled
+  ansible.builtin.command: "gcloud secrets versions access latest --secret={{ secret_platform_perplexity_key }} --project={{ gcp_project }}"
+  register: platform_perplexity_read
+  changed_when: false
+  no_log: true
+  when: platform_inference_proxy_enabled | bool
+
+- name: Fold the platform Perplexity key into the secrets map
+  ansible.builtin.set_fact:
+    platform_secrets: "{{ platform_secrets | combine({'perplexity_api_key': platform_perplexity_read.stdout}) }}"
+  no_log: true
+  when: platform_inference_proxy_enabled | bool
+
 # The screener token is optional (only where a screener is allowlisted), so it is
 # read + folded in separately rather than in the required-secrets loop above.
 - name: Read screener API token from Secret Manager (when a screener is configured)

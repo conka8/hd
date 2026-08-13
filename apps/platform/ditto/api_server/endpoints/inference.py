@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import hashlib
 import json
 import logging
@@ -193,6 +194,13 @@ class _ProviderResult:
     attempts: int
 
 
+@dataclass(frozen=True)
+class _EmbeddingProviderResult:
+    response: httpx.Response
+    attempts: int
+    direct: bool
+
+
 class _ProviderCallError(Exception):
     def __init__(self, *, attempts: int, timed_out: bool) -> None:
         super().__init__("provider request failed")
@@ -307,6 +315,93 @@ async def _post_provider_with_retry(
             continue
         return _ProviderResult(response=response, attempts=attempt)
     raise AssertionError("provider retry loop exhausted without a terminal result")
+
+
+async def _post_embedding_provider(
+    client: httpx.AsyncClient,
+    *,
+    config: Any,
+    inputs: list[str],
+) -> _EmbeddingProviderResult:
+    """Use OpenRouter first, then direct Perplexity for the same frozen model."""
+    openrouter_payload = {
+        "model": config.embedding_model,
+        "input": inputs,
+        "dimensions": config.embedding_dimensions,
+        "encoding_format": "float",
+        "provider": {
+            "order": [config.embedding_provider],
+            "allow_fallbacks": False,
+            "data_collection": "deny",
+        },
+    }
+    openrouter: _ProviderResult | None = None
+    openrouter_error: _ProviderCallError | None = None
+    try:
+        openrouter = await _post_provider_with_retry(
+            client,
+            config.embedding_upstream_url,
+            payload=openrouter_payload,
+            headers=_openrouter_headers(config.openrouter_api_key),
+            retry_backpressure=False,
+        )
+    except _ProviderCallError as error:
+        openrouter_error = error
+    if openrouter is not None and openrouter.response.status_code < 400:
+        return _EmbeddingProviderResult(
+            response=openrouter.response, attempts=openrouter.attempts, direct=False
+        )
+    if config.perplexity_api_key is None or (
+        openrouter is not None
+        and openrouter.response.status_code not in _PROVIDER_RETRY_STATUSES
+    ):
+        if openrouter_error is not None:
+            raise openrouter_error
+        assert openrouter is not None
+        return _EmbeddingProviderResult(
+            response=openrouter.response, attempts=openrouter.attempts, direct=False
+        )
+    if openrouter is not None:
+        await openrouter.response.aclose()
+    try:
+        direct = await _post_provider_with_retry(
+            client,
+            config.embedding_fallback_url,
+            payload={
+                "model": _PPLX_EMBED_RESPONSE_MODEL,
+                "input": inputs,
+                "dimensions": config.embedding_dimensions,
+                "encoding_format": "base64_int8",
+            },
+            headers={
+                "Authorization": f"Bearer {config.perplexity_api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+    except _ProviderCallError as error:
+        raise _ProviderCallError(
+            attempts=(
+                openrouter.attempts
+                if openrouter is not None
+                else openrouter_error.attempts
+                if openrouter_error is not None
+                else 0
+            )
+            + error.attempts,
+            timed_out=error.timed_out,
+        ) from error
+    return _EmbeddingProviderResult(
+        response=direct.response,
+        attempts=(
+            openrouter.attempts
+            if openrouter is not None
+            else openrouter_error.attempts
+            if openrouter_error is not None
+            else 0
+        )
+        + direct.attempts,
+        direct=True,
+    )
 
 
 def _exchange_message(payload: InferenceExchangeRequest) -> bytes:
@@ -1492,6 +1587,41 @@ def _public_embedding_response(
     )
 
 
+def _perplexity_embedding_response(payload: Any) -> dict[str, Any]:
+    """Convert Perplexity's native INT8 envelope to the reviewed float wire.
+
+    OpenRouter's Perplexity adapter exposes the model's signed INT8 values as
+    floats divided by 128.  The direct API returns the same bytes as base64.
+    Converting here keeps the scorer-visible vector space identical while
+    allowing a second gateway to the same frozen model.
+    """
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=502, detail="invalid provider response")
+    data = payload.get("data")
+    if not isinstance(data, list):
+        raise HTTPException(status_code=502, detail="invalid provider response")
+    converted: list[dict[str, Any]] = []
+    for item in data:
+        encoded = item.get("embedding") if isinstance(item, dict) else None
+        if not isinstance(encoded, str):
+            raise HTTPException(status_code=502, detail="invalid provider response")
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as error:
+            raise HTTPException(
+                status_code=502, detail="invalid provider response"
+            ) from error
+        converted.append(
+            {
+                **item,
+                "embedding": [
+                    (byte - 256 if byte >= 128 else byte) / 128 for byte in raw
+                ],
+            }
+        )
+    return {**payload, "data": converted}
+
+
 @router.post("/exchange", response_model=InferenceExchangeResponse)
 async def exchange_inference_grant(
     payload: InferenceExchangeRequest,
@@ -1887,17 +2017,6 @@ async def proxy_embeddings(
         if isinstance(reserved, InferenceDecline):
             raise InferenceDeclinedError(reserved, lane="embedding")
 
-    upstream_payload = {
-        "model": config.embedding_model,
-        "input": inputs,
-        "dimensions": config.embedding_dimensions,
-        "encoding_format": "float",
-        "provider": {
-            "order": [config.embedding_provider],
-            "allow_fallbacks": False,
-            "data_collection": "deny",
-        },
-    }
     status = "failed"
     prompt_tokens = 0
     raw: bytes | None = None
@@ -1906,12 +2025,10 @@ async def proxy_embeddings(
     terminal_error_code: str | None = None
     started = time.monotonic()
     try:
-        provider_result = await _post_provider_with_retry(
+        provider_result = await _post_embedding_provider(
             request.app.state.inference_client,
-            config.embedding_upstream_url,
-            payload=upstream_payload,
-            headers=_openrouter_headers(config.openrouter_api_key),
-            retry_backpressure=False,
+            config=config,
+            inputs=inputs,
         )
         upstream = provider_result.response
         upstream_attempts = provider_result.attempts
@@ -1937,6 +2054,8 @@ async def proxy_embeddings(
             )
         try:
             decoded = upstream.json()
+            if provider_result.direct:
+                decoded = _perplexity_embedding_response(decoded)
         except ValueError as error:
             raise HTTPException(
                 status_code=502, detail="invalid provider response"

@@ -32,6 +32,8 @@ from ditto.api_server.endpoints.inference import (
     _openrouter_headers,
     _openrouter_last_attempted_provider,
     _output_token_limit,
+    _perplexity_embedding_response,
+    _post_embedding_provider,
     _post_provider_with_retry,
     _provider_is_backpressure,
     _provider_preferences,
@@ -56,6 +58,121 @@ def test_hosted_embedding_contract_is_inherited_by_later_benches() -> None:
     assert _uses_hosted_embeddings(8)
     assert _uses_hosted_embeddings(9)
     assert _uses_hosted_embeddings(10)
+
+
+def _embedding_config(**overrides: Any) -> SimpleNamespace:
+    values = {
+        "embedding_upstream_url": "https://openrouter.ai/api/v1/embeddings",
+        "embedding_fallback_url": "https://api.perplexity.ai/v1/embeddings",
+        "embedding_model": "perplexity/pplx-embed-v1-0.6b",
+        "embedding_provider": "Perplexity",
+        "embedding_dimensions": 768,
+        "openrouter_api_key": "openrouter-test-key",
+        "perplexity_api_key": "perplexity-test-key",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+@pytest.mark.asyncio
+async def test_embedding_gateway_falls_back_to_direct_perplexity_on_429() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.host == "openrouter.ai":
+            return httpx.Response(429, request=request, headers={"Retry-After": "5"})
+        payload = json.loads(request.content)
+        assert payload == {
+            "model": "pplx-embed-v1-0.6b",
+            "input": ["private input"],
+            "dimensions": 768,
+            "encoding_format": "base64_int8",
+        }
+        assert request.headers["Authorization"] == "Bearer perplexity-test-key"
+        return httpx.Response(200, request=request, json={"data": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await _post_embedding_provider(
+            client, config=_embedding_config(), inputs=["private input"]
+        )
+    assert result.direct
+    assert result.attempts == 2
+    assert [request.url.host for request in requests] == [
+        "openrouter.ai",
+        "api.perplexity.ai",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_embedding_gateway_does_not_fallback_on_agent_request_error() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(400, request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await _post_embedding_provider(
+            client, config=_embedding_config(), inputs=["private input"]
+        )
+    assert not result.direct
+    assert result.response.status_code == 400
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_embedding_gateway_keeps_openrouter_primary_when_healthy() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, request=request, json={"data": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await _post_embedding_provider(
+            client, config=_embedding_config(), inputs=["private input"]
+        )
+    assert not result.direct
+    assert result.response.status_code == 200
+    assert len(requests) == 1
+
+
+def test_direct_perplexity_int8_conversion_matches_openrouter_float_contract() -> None:
+    signed = [-128, -1, 0, 1, 127]
+    encoded = base64.b64encode(bytes(value & 0xFF for value in signed)).decode()
+    converted = _perplexity_embedding_response(
+        {
+            "model": "pplx-embed-v1-0.6b",
+            "data": [{"object": "embedding", "index": 0, "embedding": encoded}],
+            "usage": {"prompt_tokens": 5, "total_tokens": 5},
+        }
+    )
+    assert converted["data"][0]["embedding"] == [value / 128 for value in signed]
+
+
+@pytest.mark.parametrize("encoded", ["not base64!", base64.b64encode(b"").decode()])
+def test_direct_perplexity_conversion_fails_closed_on_invalid_vectors(
+    encoded: str,
+) -> None:
+    try:
+        converted = _perplexity_embedding_response(
+            {
+                "model": "pplx-embed-v1-0.6b",
+                "data": [{"index": 0, "embedding": encoded}],
+                "usage": {"prompt_tokens": 1},
+            }
+        )
+    except HTTPException as error:
+        assert error.status_code == 502
+        return
+    with pytest.raises(HTTPException, match="invalid provider response"):
+        _public_embedding_response(
+            converted,
+            model="perplexity/pplx-embed-v1-0.6b",
+            dimensions=768,
+            input_count=1,
+        )
 
 
 @pytest.mark.asyncio
