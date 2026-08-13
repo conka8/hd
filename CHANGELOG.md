@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.53.20 (2026-08-13)
+
+### Bug Fixes
+
+- **platform**: Add direct embedding gateway fallback
+  ([`83aa356`](https://github.com/ditto-assistant/ditto-subnet/commit/83aa3560d1614cd45a46e07d8066458347db5540))
+
+
 ## v0.53.19 (2026-08-12)
 
 ### Bug Fixes
