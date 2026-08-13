@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v0.55.0 (2026-08-13)
+
+### Chores
+
+- **agent**: Add W&B API operations skill
+  ([#680](https://github.com/ditto-assistant/ditto-subnet/pull/680),
+  [`2f95c51`](https://github.com/ditto-assistant/ditto-subnet/commit/2f95c51aa22319882b07ac91425daa4e421450f4))
+
+- **platform**: Stop fork PRs failing a migration check that passed
+  ([#684](https://github.com/ditto-assistant/ditto-subnet/pull/684),
+  [`291fe6c`](https://github.com/ditto-assistant/ditto-subnet/commit/291fe6ca5466a33a3f0bb8aa35b4cb5dd796a810))
+
+### Features
+
+- **scoring**: Add retest-aware bounded v9 efficiency ranking
+  ([#675](https://github.com/ditto-assistant/ditto-subnet/pull/675),
+  [`6c13112`](https://github.com/ditto-assistant/ditto-subnet/commit/6c1311244bf1bd933694fe9444e586fd677b3a29))
+
+
 ## v0.54.0 (2026-08-13)
 
 ### Bug Fixes
