@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.53.21 (2026-08-13)
+
+### Bug Fixes
+
+- **platform**: Make direct embeddings primary
+  ([#671](https://github.com/ditto-assistant/ditto-subnet/pull/671),
+  [`c1693aa`](https://github.com/ditto-assistant/ditto-subnet/commit/c1693aab2168cb494c7572b46b2a083449330076))
+
+
 ## v0.53.20 (2026-08-13)
 
 ### Bug Fixes
