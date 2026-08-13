@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.56.4 (2026-08-13)
+
+### Bug Fixes
+
+- **platform**: Suppress exhausted rollout tail
+  ([#706](https://github.com/ditto-assistant/ditto-subnet/pull/706),
+  [`ef888c7`](https://github.com/ditto-assistant/ditto-subnet/commit/ef888c7e69ca1913b7f82bb1d99a13be0b81f5f7))
+
+
 ## v0.56.3 (2026-08-13)
 
 ### Bug Fixes
