@@ -513,3 +513,155 @@ async def test_terminal_deep_attempt_suppresses_old_admission_marker(
         session.add_all([review, deep])
 
     assert await _deferred_screening_attempt(session, agent_id=agent.agent_id) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["off", "bypass"])
+async def test_off_and_bypass_compute_nothing_at_all(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    """``off`` and ``bypass`` are true skips, not suppressed holds.
+
+    ``observe`` already covers "qualify but do not hold". The distinction that
+    makes these separate modes is that the qualification is never *computed*,
+    so the canonical ledger is not even read. Asserting only the absence of a
+    hold would pass in either mode and would not notice one quietly degrading
+    into an unrecorded ``observe``.
+
+    For ``bypass`` this is the post-score half of "no source review at all";
+    ``test_bypass_admits_on_the_cheap_screen_like_enforce`` pins the pre-score
+    half. Together they are the whole claim: nothing expensive runs at either
+    end, and the submission goes straight to validator scoring.
+    """
+    now = datetime.now(UTC)
+    agent = Agent(
+        agent_id=uuid4(),
+        miner_hotkey=f"{mode}-miner",
+        name=f"{mode}-agent",
+        sha256="ef" * 32,
+        status=AgentStatus.SCORED,
+        screening_policy_version=9,
+    )
+    admission = ScreeningAttempt(
+        attempt_id=uuid4(),
+        agent_id=agent.agent_id,
+        screener_hotkey="screener",
+        policy_version=9,
+        status="passed",
+        started_at=now - timedelta(hours=1),
+        deadline=now - timedelta(minutes=30),
+        finished_at=now - timedelta(minutes=45),
+        reason_code="deferred-mechanical-admission",
+        build_only=True,
+    )
+    async with session.begin():
+        session.add_all([agent, admission])
+
+    async def _fail(*_args: object, **_kwargs: object) -> list[LedgerRow]:
+        raise AssertionError(f"{mode} mode must not read the canonical ledger")
+
+    monkeypatch.setattr(
+        "ditto.api_server.endpoints.validator.list_eligible_ledger", _fail
+    )
+    async with session.begin():
+        await _evaluate_and_record_deferred_review(
+            session,
+            agent=agent,
+            bench_version=8,
+            score_count=3,
+            settings=DeferredSourceReviewSettings(mode=mode),  # type: ignore[arg-type]
+            now=now,
+        )
+
+    review = await session.scalar(
+        select(AthReview).where(AthReview.agent_id == agent.agent_id)
+    )
+    audit = await session.scalar(
+        select(ScoreAuditEntry).where(ScoreAuditEntry.agent_id == agent.agent_id)
+    )
+    assert review is None
+    assert audit is None
+    assert agent.status == AgentStatus.SCORED
+    assert agent.review_reason is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["off", "observe", "enforce", "bypass"])
+async def test_copy_hold_survives_every_deferred_mode(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    """Turning the source-integrity branch down never releases a copy hold.
+
+    This board scopes the *source-integrity* branch only. The dangerous misread
+    is that ``mode="off"`` -- or, worse, the new ``mode="bypass"``, which really
+    does mean "no source review at all" -- also stands down plagiarism
+    enforcement, so pin the
+    boundary directly: an agent held for copy review keeps its pending hold, its
+    ``review_kind``, its matched pointer and its ``ATH_PENDING_REVIEW`` status in
+    every mode. The deferred path acts only on ``SCORED``/``LIVE`` rows, so a
+    copy-held agent is outside its reach by construction.
+    """
+    now = datetime.now(UTC)
+    original = Agent(
+        agent_id=uuid4(),
+        miner_hotkey="original-miner",
+        name="original-agent",
+        sha256="a1" * 32,
+        status=AgentStatus.SCORED,
+        screening_policy_version=9,
+    )
+    matched = original.agent_id
+    agent = Agent(
+        agent_id=uuid4(),
+        miner_hotkey="copy-miner",
+        name="copy-agent",
+        sha256="ba" * 32,
+        status=AgentStatus.ATH_PENDING_REVIEW,
+        duplicate_of=matched,
+        review_reason="Near-duplicate of an earlier submission",
+        screening_policy_version=9,
+    )
+    review = AthReview(
+        review_id=uuid4(),
+        agent_id=agent.agent_id,
+        status="pending",
+        opened_at=now - timedelta(hours=2),
+        original_duplicate_of=matched,
+        original_reason="Near-duplicate of an earlier submission",
+        original_policy_version=9,
+        original_evidence={"content_fingerprint_version": 3},
+        algorithm_provenance={
+            "snapshot": "score-finalization",
+            "review_kind": "copy",
+            "opened_at_source": "agent_finalized_audit",
+        },
+    )
+    async with session.begin():
+        session.add_all([original, agent, review])
+
+    async def _fail(*_args: object, **_kwargs: object) -> list[LedgerRow]:
+        raise AssertionError("a copy-held agent must never reach ledger evaluation")
+
+    monkeypatch.setattr(
+        "ditto.api_server.endpoints.validator.list_eligible_ledger", _fail
+    )
+    async with session.begin():
+        await _evaluate_and_record_deferred_review(
+            session,
+            agent=agent,
+            bench_version=8,
+            score_count=3,
+            settings=DeferredSourceReviewSettings(mode=mode),  # type: ignore[arg-type]
+            now=now,
+        )
+
+    assert agent.status == AgentStatus.ATH_PENDING_REVIEW
+    assert agent.duplicate_of == matched
+    assert review.status == "pending"
+    assert review.resolution is None
+    assert review.original_duplicate_of == matched
+    assert review.algorithm_provenance["review_kind"] == "copy"

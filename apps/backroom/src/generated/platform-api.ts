@@ -8411,6 +8411,25 @@ export interface components {
         /**
          * DeferredSourceReviewSettings
          * @description Hot-swappable post-score deep-review admission and anomaly policy.
+         *
+         *     This board decides *where* the expensive source review runs -- before
+         *     scoring (automatic, by a screener), after it (as an operator-adjudicated
+         *     hold), or, in ``bypass``, nowhere at all. Three of the four modes review
+         *     every submission somewhere; ``bypass`` is the one that does not, and it is
+         *     the only way to send admitted submissions straight to validator scoring.
+         *
+         *     SCOPE -- source integrity only
+         *     ==============================
+         *
+         *     Nothing on this board touches **copy/plagiarism** enforcement. Copy holds
+         *     (``review_kind: "copy"``) are opened from the duplicate-signal decision at
+         *     score finalization, which never reads this board, runs *before* the deferred
+         *     path, and wins outright: a copy hold moves the agent to
+         *     ``ATH_PENDING_REVIEW``, and the deferred path only acts on agents still in
+         *     ``SCORED``/``LIVE``. Setting ``mode="off"`` or ``mode="bypass"`` disables the
+         *     deferred source-integrity branch and **leaves plagiarism detection fully
+         *     armed**. The same is true of the transform/overfit audit, which has its own
+         *     switch. "No source review" never means "no copy detection".
          */
         DeferredSourceReviewSettings: {
             /**
@@ -8443,7 +8462,7 @@ export interface components {
              * @default off
              * @enum {string}
              */
-            mode: "off" | "observe" | "enforce";
+            mode: "off" | "observe" | "enforce" | "bypass";
         };
         /**
          * DockerHealth
