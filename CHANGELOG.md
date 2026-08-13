@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.56.2 (2026-08-13)
+
+### Bug Fixes
+
+- **platform**: Load relay env from monorepo root
+  ([#702](https://github.com/ditto-assistant/ditto-subnet/pull/702),
+  [`c70955e`](https://github.com/ditto-assistant/ditto-subnet/commit/c70955e79326ab1aa41ee83b94c9df8c77706053))
+
+- **release**: Classify stale runs as superseded
+  ([#697](https://github.com/ditto-assistant/ditto-subnet/pull/697),
+  [`3eb941f`](https://github.com/ditto-assistant/ditto-subnet/commit/3eb941f0106950d0ccc03259bfd12925d8a15b8f))
+
+
 ## v0.56.1 (2026-08-13)
 
 ### Bug Fixes
