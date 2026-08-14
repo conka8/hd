@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.63.2 (2026-08-14)
+
+### Bug Fixes
+
+- **release**: Build scorer on native architectures
+  ([#773](https://github.com/ditto-assistant/ditto-subnet/pull/773),
+  [`c0b2958`](https://github.com/ditto-assistant/ditto-subnet/commit/c0b295845429ea6e659e8ad9e89151f7001b6331))
+
+
 ## v0.63.1 (2026-08-14)
 
 ### Bug Fixes
