@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.65.0 (2026-08-14)
+
+### Features
+
+- **validator**: Publish LongMem heartbeat progress
+  ([#768](https://github.com/ditto-assistant/ditto-subnet/pull/768),
+  [`aed592c`](https://github.com/ditto-assistant/ditto-subnet/commit/aed592c240cb3dcadc32ffcb0ac8a93925b49381))
+
+
 ## v0.64.0 (2026-08-14)
 
 ### Bug Fixes
