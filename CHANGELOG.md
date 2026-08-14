@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.61.1 (2026-08-14)
+
+### Bug Fixes
+
+- **platform**: Extract relay artifacts as deploy user
+  ([#745](https://github.com/ditto-assistant/ditto-subnet/pull/745),
+  [`2ed8042`](https://github.com/ditto-assistant/ditto-subnet/commit/2ed80422a48188bad14d06bcf278514cbf963252))
+
+- **validator**: Bootstrap WSL frozen updater
+  ([#743](https://github.com/ditto-assistant/ditto-subnet/pull/743),
+  [`e5d593a`](https://github.com/ditto-assistant/ditto-subnet/commit/e5d593a755d9f7d4dc0ba19a9e4ebe6e0a178b04))
+
+
 ## v0.61.0 (2026-08-14)
 
 ### Features
