@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.62.1 (2026-08-14)
+
+### Bug Fixes
+
+- **platform**: Prioritize confirmation policy writes
+  ([#767](https://github.com/ditto-assistant/ditto-subnet/pull/767),
+  [`8d68b81`](https://github.com/ditto-assistant/ditto-subnet/commit/8d68b81185ecd53f58d6fd84bf724d2d26a933ad))
+
+
 ## v0.62.0 (2026-08-14)
 
 ### Bug Fixes
