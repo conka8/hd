@@ -2,6 +2,23 @@
 
 <!-- version list -->
 
+## v0.58.3 (2026-08-14)
+
+### Bug Fixes
+
+- **backroom**: Bound stuck submission lists
+  ([#733](https://github.com/ditto-assistant/ditto-subnet/pull/733),
+  [`c3f11a1`](https://github.com/ditto-assistant/ditto-subnet/commit/c3f11a1b9ebf797f4611663a60cd1de33afe5737))
+
+- **platform**: Prevent embedding startup stampedes
+  ([#735](https://github.com/ditto-assistant/ditto-subnet/pull/735),
+  [`dc7e965`](https://github.com/ditto-assistant/ditto-subnet/commit/dc7e9657adac366af5eb2210307e468853483207))
+
+- **validator**: Bound continual retest failure loops
+  ([#734](https://github.com/ditto-assistant/ditto-subnet/pull/734),
+  [`e89af4f`](https://github.com/ditto-assistant/ditto-subnet/commit/e89af4fa3756153b42ffd1e249abf8ee7f213b62))
+
+
 ## v0.58.2 (2026-08-14)
 
 ### Bug Fixes
