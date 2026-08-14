@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.62.2 (2026-08-14)
+
+### Bug Fixes
+
+- **release**: Resume post-release fanout after skips
+  ([#770](https://github.com/ditto-assistant/ditto-subnet/pull/770),
+  [`9a36ecc`](https://github.com/ditto-assistant/ditto-subnet/commit/9a36ecc26ae6307ddfbac8be3e87e296f05a9676))
+
+- **validator**: Accept private updater checkout isolation
+  ([#771](https://github.com/ditto-assistant/ditto-subnet/pull/771),
+  [`69f0c49`](https://github.com/ditto-assistant/ditto-subnet/commit/69f0c49598f069cf47683eeed209ad1236aef6d3))
+
+
 ## v0.62.1 (2026-08-14)
 
 ### Bug Fixes
