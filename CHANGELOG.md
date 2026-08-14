@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.63.4 (2026-08-14)
+
+### Bug Fixes
+
+- **release**: Parallelize artifact authentication
+  ([#782](https://github.com/ditto-assistant/ditto-subnet/pull/782),
+  [`7d0d05f`](https://github.com/ditto-assistant/ditto-subnet/commit/7d0d05f49899e17373387a881af7d02b1b1a8dc7))
+
+
 ## v0.63.3 (2026-08-14)
 
 ### Bug Fixes
