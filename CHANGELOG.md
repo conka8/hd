@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v0.59.0 (2026-08-14)
+
+### Bug Fixes
+
+- **release**: Recover validator stack upgrades
+  ([#720](https://github.com/ditto-assistant/ditto-subnet/pull/720),
+  [`98c5381`](https://github.com/ditto-assistant/ditto-subnet/commit/98c538103b124cdda431dca226b49ab032867940))
+
+### Features
+
+- **dittobench**: Install bounded LongMem shadow profile
+  ([#721](https://github.com/ditto-assistant/ditto-subnet/pull/721),
+  [`5525811`](https://github.com/ditto-assistant/ditto-subnet/commit/5525811fb7f151ff600593d54ca7d6bf25e4c9cb))
+
+
 ## v0.58.3 (2026-08-14)
 
 ### Bug Fixes
