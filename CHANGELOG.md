@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.63.6 (2026-08-14)
+
+### Bug Fixes
+
+- **release**: Cache verified scorer assets
+  ([#785](https://github.com/ditto-assistant/ditto-subnet/pull/785),
+  [`50a8935`](https://github.com/ditto-assistant/ditto-subnet/commit/50a8935f1ffff7f08a21b2603331686f161b55d8))
+
+
 ## v0.63.5 (2026-08-14)
 
 ### Bug Fixes
