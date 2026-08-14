@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.61.3 (2026-08-14)
+
+### Bug Fixes
+
+- **release**: Provide validator identity to stack smoke
+  ([#750](https://github.com/ditto-assistant/ditto-subnet/pull/750),
+  [`421530c`](https://github.com/ditto-assistant/ditto-subnet/commit/421530c563d55e5c3ee42e302c450cea9f719250))
+
+- **release**: Unblock relay and validator stack activation
+  ([#751](https://github.com/ditto-assistant/ditto-subnet/pull/751),
+  [`02ee2ab`](https://github.com/ditto-assistant/ditto-subnet/commit/02ee2abcd0e11eacb5eb6e8695789b59f4b7a6ef))
+
+
 ## v0.61.2 (2026-08-14)
 
 ### Bug Fixes
