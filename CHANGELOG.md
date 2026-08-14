@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.59.1 (2026-08-14)
+
+### Bug Fixes
+
+- **validator**: Stage retest claims to fill idle slots
+  ([#736](https://github.com/ditto-assistant/ditto-subnet/pull/736),
+  [`1d1557a`](https://github.com/ditto-assistant/ditto-subnet/commit/1d1557ad5744f67303a7552b1eb6a41177a465f7))
+
+
 ## v0.59.0 (2026-08-14)
 
 ### Bug Fixes
