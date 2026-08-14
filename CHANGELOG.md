@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.58.2 (2026-08-14)
+
+### Bug Fixes
+
+- **platform**: Exclude deregistered miners from public crown
+  ([#718](https://github.com/ditto-assistant/ditto-subnet/pull/718),
+  [`5f9cc44`](https://github.com/ditto-assistant/ditto-subnet/commit/5f9cc44313fdc432d7428a56955c9c847f6e89df))
+
+
 ## v0.58.1 (2026-08-14)
 
 ### Bug Fixes
