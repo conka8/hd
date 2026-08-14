@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.63.1 (2026-08-14)
+
+### Bug Fixes
+
+- **platform**: Skip completed efficiency audits
+  ([#774](https://github.com/ditto-assistant/ditto-subnet/pull/774),
+  [`3d2a128`](https://github.com/ditto-assistant/ditto-subnet/commit/3d2a1289341b445e13a091a6d3fe56b5360085d9))
+
+
 ## v0.63.0 (2026-08-14)
 
 ### Features
