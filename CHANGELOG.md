@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v0.64.0 (2026-08-14)
+
+### Bug Fixes
+
+- **platform**: Share fleet-safe efficiency ledgers
+  ([#775](https://github.com/ditto-assistant/ditto-subnet/pull/775),
+  [`fb2c35e`](https://github.com/ditto-assistant/ditto-subnet/commit/fb2c35e4459cfb79ffdec3bf2c0840fb3178bab6))
+
+- **platform**: Show paused validators in operations
+  ([#781](https://github.com/ditto-assistant/ditto-subnet/pull/781),
+  [`aba3d30`](https://github.com/ditto-assistant/ditto-subnet/commit/aba3d30a9d7bbb8e0b47927a838af93dad35ae2d))
+
+### Features
+
+- **platform**: Make hosted inference policy live
+  ([#780](https://github.com/ditto-assistant/ditto-subnet/pull/780),
+  [`ec5b8d9`](https://github.com/ditto-assistant/ditto-subnet/commit/ec5b8d9e2af76d90fb52044b9d604477710a7e5f))
+
+
 ## v0.63.6 (2026-08-14)
 
 ### Bug Fixes
