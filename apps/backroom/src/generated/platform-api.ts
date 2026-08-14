@@ -8382,6 +8382,47 @@ export interface components {
             /** Token Budget */
             token_budget: number;
         };
+        /**
+         * ConfirmationProgress
+         * @description One independent LongMem/ablation slot reported by its validator.
+         *
+         *     Scores, provider details, prompts, response text, and errors are deliberately
+         *     absent. Platform joins this opaque ticket identity to its own ledger before
+         *     publishing it.
+         */
+        ConfirmationProgress: {
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /**
+             * Bundle Id
+             * Format: uuid
+             */
+            bundle_id: string;
+            /** Completed */
+            completed?: number | null;
+            /** Slot Id */
+            slot_id: string;
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "preparing" | "running_confirmation" | "finalizing" | "submitting_result" | "failed_retrying";
+            /**
+             * Ticket Deadline
+             * Format: date-time
+             */
+            ticket_deadline: string;
+            /**
+             * Ticket Id
+             * Format: uuid
+             */
+            ticket_id: string;
+            /** Total */
+            total?: number | null;
+        };
         /** ConfirmationProviderLaneProfile */
         ConfirmationProviderLaneProfile: {
             /** Lane */
@@ -11403,6 +11444,56 @@ export interface components {
             tool_weight: number;
         };
         /**
+         * PublicConfirmationProgress
+         * @description Live LongMemEval/ablation work on independent validator capacity.
+         */
+        PublicConfirmationProgress: {
+            /** Attempt */
+            attempt: number;
+            /**
+             * Bench Version
+             * @default 9
+             * @constant
+             */
+            bench_version: 9;
+            /**
+             * Bundle Id
+             * Format: uuid
+             */
+            bundle_id: string;
+            /** Completed */
+            completed?: number | null;
+            /**
+             * Deadline
+             * Format: date-time
+             */
+            deadline: string;
+            /**
+             * Issued At
+             * Format: date-time
+             */
+            issued_at: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "shadow" | "enforce";
+            /** Profile Revision */
+            profile_revision: string;
+            /** Progress Reported At */
+            progress_reported_at?: string | null;
+            /** Reported Agent Id */
+            reported_agent_id?: string | null;
+            /** Slot Id */
+            slot_id: string;
+            /** Stage */
+            stage?: ("preparing" | "running_confirmation" | "finalizing" | "submitting_result" | "failed_retrying") | null;
+            /** Subjects */
+            subjects?: components["schemas"]["PublicConfirmationSubject"][];
+            /** Total */
+            total?: number | null;
+        };
+        /**
          * PublicConfirmationScore
          * @description One append-only shared-seed score from a continual top-five retest.
          */
@@ -11423,6 +11514,19 @@ export interface components {
             seed: string;
             /** Validator Hotkey */
             validator_hotkey: string;
+        };
+        /**
+         * PublicConfirmationSubject
+         * @description Public-safe subject identity in one shared confirmation bundle.
+         */
+        PublicConfirmationSubject: {
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Agent Name */
+            agent_name: string;
         };
         /**
          * PublicDatasetReveal
@@ -13641,6 +13745,11 @@ export interface components {
              * @default 1
              */
             configured_slots: number;
+            /**
+             * Confirmation Benchmarks
+             * @description Live LongMemEval and ablation confirmation tickets. These use independent longmem slots and never consume ordinary benchmark capacity.
+             */
+            confirmation_benchmarks?: components["schemas"]["PublicConfirmationProgress"][];
             /** First Seen At */
             first_seen_at?: string | null;
             /**
@@ -16698,6 +16807,11 @@ export interface components {
              * @description SHA-256 of the installed validator Python source.
              */
             code_digest: string;
+            /**
+             * Confirmation Progress
+             * @description Signed independent LongMemEval/ablation slot progress under heartbeat protocol v22.
+             */
+            confirmation_progress?: components["schemas"]["ConfirmationProgress"][] | null;
             /**
              * Protocol Version
              * @description Heartbeat protocol version.

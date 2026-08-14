@@ -105,6 +105,7 @@ from ditto.db.queries.benchmark_rollout import (
     MIN_SCOREABLE_BENCH_VERSION,
 )
 from ditto.db.queries.confirmation_bundles import (
+    ActiveConfirmationWork,
     insert_confirmation_bundle_settings_revision,
 )
 from ditto.db.queries.scores import (
@@ -4170,6 +4171,7 @@ def _liveness_row(
         },
         benchmark_progress=None,
         benchmark_capacity=None,
+        confirmation_progress=None,
         capabilities=capabilities,
         stack={
             "mode": "managed",
@@ -4207,6 +4209,91 @@ def _liveness_row(
     )
 
 
+def test_confirmation_work_is_public_without_consuming_ordinary_slots() -> None:
+    now = datetime(2026, 8, 14, 15, 0, tzinfo=UTC)
+    bundle_id = uuid4()
+    subject_id = uuid4()
+    confirmation = cast(
+        ActiveConfirmationWork,
+        SimpleNamespace(
+            ticket=SimpleNamespace(
+                ticket_id=uuid4(),
+                validator_hotkey=_VALIDATOR_C,
+                slot_id="longmem-0",
+                attempt=2,
+                issued_at=now - timedelta(minutes=7),
+                deadline=now + timedelta(minutes=83),
+            ),
+            bundle=SimpleNamespace(
+                bundle_id=bundle_id,
+                profile_revision="longmemeval-s-native-memory-tools-v2",
+            ),
+            mode=ConfirmationBundleMode.SHADOW,
+            subjects=(SimpleNamespace(agent_id=subject_id, agent_name="Memory agent"),),
+        ),
+    )
+
+    row = _liveness_row(now, protocol_version=22, scorer=None)
+    row.confirmation_progress = [
+        {
+            "bundle_id": str(bundle_id),
+            "ticket_id": str(confirmation.ticket.ticket_id),
+            "agent_id": str(subject_id),
+            "slot_id": "longmem-0",
+            "stage": "running_confirmation",
+            "completed": 117,
+            "total": 500,
+            "ticket_deadline": confirmation.ticket.deadline.isoformat(),
+        }
+    ]
+    response = public_endpoint._validator_heartbeats_response(
+        rows=[row],
+        assignments=[],
+        active_work=[],
+        confirmation_work=[confirmation],
+        orphaned_leases=[],
+        now=now,
+        active_bench_version=LEGACY_BENCH_VERSION,
+        slot_settings=SLOT_SETTINGS_DEFAULT,
+    )
+
+    [entry] = response.validators
+    assert entry.active_benchmarks == []
+    assert entry.assigned_benchmarks == []
+    assert len(entry.confirmation_benchmarks) == 1
+    [published] = entry.confirmation_benchmarks
+    assert published.bundle_id == bundle_id
+    assert published.slot_id == "longmem-0"
+    assert published.mode == "shadow"
+    assert published.stage == "running_confirmation"
+    assert published.completed == 117
+    assert published.total == 500
+    assert published.reported_agent_id == subject_id
+    assert published.progress_reported_at == now
+    assert [
+        (subject.agent_id, subject.agent_name) for subject in published.subjects
+    ] == [(subject_id, "Memory agent")]
+
+    # A superseded ticket may use the same bundle and slot. Its signed progress
+    # must never decorate the replacement ticket merely because those broader
+    # identities still match.
+    row.confirmation_progress[0]["ticket_id"] = str(uuid4())
+    replacement = public_endpoint._validator_heartbeats_response(
+        rows=[row],
+        assignments=[],
+        active_work=[],
+        confirmation_work=[confirmation],
+        orphaned_leases=[],
+        now=now,
+        active_bench_version=LEGACY_BENCH_VERSION,
+        slot_settings=SLOT_SETTINGS_DEFAULT,
+    )
+    [replacement_progress] = replacement.validators[0].confirmation_benchmarks
+    assert replacement_progress.stage is None
+    assert replacement_progress.completed is None
+    assert replacement_progress.progress_reported_at is None
+
+
 class TestScorerLivenessSurfacing:
     """A validator whose scorer is not serving must not read like a warning.
 
@@ -4233,6 +4320,7 @@ class TestScorerLivenessSurfacing:
             rows=[_liveness_row(now, protocol_version=protocol_version, scorer=scorer)],
             assignments=[],
             active_work=[],
+            confirmation_work=[],
             orphaned_leases=[],
             now=now,
             active_bench_version=active_bench_version,
@@ -4558,6 +4646,7 @@ class TestActiveBenchCapabilityGate:
             rows=rows,
             assignments=[],
             active_work=[],
+            confirmation_work=[],
             orphaned_leases=[],
             now=now,
             active_bench_version=version,
@@ -5087,7 +5176,8 @@ class TestPublicActivity:
         # Budget the complete handler, not just its five-query page helper.
         # This fixture exercises an open rollout, validator assignments, retry
         # classification, fleet/orphan snapshots, and build telemetry.
-        assert len(statements) <= 33
+        # Includes one bounded query for the independent live LongMem lane.
+        assert len(statements) <= 34
         body = response.json()
         assert body["active_bench_version"] == _ERA
         assert body["desired_bench_version"] == _NEXT_ERA
