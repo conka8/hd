@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.61.2 (2026-08-14)
+
+### Bug Fixes
+
+- **platform**: Admit finalized v9 efficiency cohorts
+  ([#744](https://github.com/ditto-assistant/ditto-subnet/pull/744),
+  [`9810a17`](https://github.com/ditto-assistant/ditto-subnet/commit/9810a1740dd3aed52671429b1f39c6cb83a43e04))
+
+
 ## v0.61.1 (2026-08-14)
 
 ### Bug Fixes
