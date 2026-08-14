@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.58.0 (2026-08-14)
+
+### Features
+
+- **validator**: Share ceiling-deadlocked crowns
+  ([#692](https://github.com/ditto-assistant/ditto-subnet/pull/692),
+  [`e165a07`](https://github.com/ditto-assistant/ditto-subnet/commit/e165a0790c121a2edc85e0f3c5dbd22723279172))
+
+
 ## v0.57.0 (2026-08-13)
 
 ### Bug Fixes
