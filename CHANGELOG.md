@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.62.3 (2026-08-14)
+
+### Bug Fixes
+
+- **platform**: Singleflight validator ledger reads
+  ([#772](https://github.com/ditto-assistant/ditto-subnet/pull/772),
+  [`914b915`](https://github.com/ditto-assistant/ditto-subnet/commit/914b9151d1755f6d033d4d272336d722fc994946))
+
+
 ## v0.62.2 (2026-08-14)
 
 ### Bug Fixes
