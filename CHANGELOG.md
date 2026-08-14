@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.63.0 (2026-08-14)
+
+### Features
+
+- **platform**: Move upload admission to Go request plane
+  ([#766](https://github.com/ditto-assistant/ditto-subnet/pull/766),
+  [`9b368e7`](https://github.com/ditto-assistant/ditto-subnet/commit/9b368e7a913d01e9cdd698008442054555b74381))
+
+
 ## v0.62.3 (2026-08-14)
 
 ### Bug Fixes
