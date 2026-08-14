@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.63.3 (2026-08-14)
+
+### Bug Fixes
+
+- **release**: Build validator on native architectures
+  ([#779](https://github.com/ditto-assistant/ditto-subnet/pull/779),
+  [`6f8291e`](https://github.com/ditto-assistant/ditto-subnet/commit/6f8291e4f286dd3bea68b42ae449afbc2247744b))
+
+
 ## v0.63.2 (2026-08-14)
 
 ### Bug Fixes
