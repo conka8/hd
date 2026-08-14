@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.63.5 (2026-08-14)
+
+### Bug Fixes
+
+- **platform**: Raise hosted inference token ceiling
+  ([`9c0ce7a`](https://github.com/ditto-assistant/ditto-subnet/commit/9c0ce7adfe6e01d34f54c115361e7f0582368a07))
+
+
 ## v0.63.4 (2026-08-14)
 
 ### Bug Fixes
