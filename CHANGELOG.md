@@ -2,6 +2,55 @@
 
 <!-- version list -->
 
+## v0.62.0 (2026-08-14)
+
+### Bug Fixes
+
+- **platform**: Bound validator ledger evidence reads
+  ([#757](https://github.com/ditto-assistant/ditto-subnet/pull/757),
+  [`e49bc44`](https://github.com/ditto-assistant/ditto-subnet/commit/e49bc44b9b0926f4dccfa58fde8c9d7634716172))
+
+- **platform**: Stop confirmation polls from saturating API
+  ([#756](https://github.com/ditto-assistant/ditto-subnet/pull/756),
+  [`9ace1a4`](https://github.com/ditto-assistant/ditto-subnet/commit/9ace1a470dddc20ff442b1b1d296dc6c70bb8cc8))
+
+- **release**: Evaluate release after optional skips
+  ([#763](https://github.com/ditto-assistant/ditto-subnet/pull/763),
+  [`5608101`](https://github.com/ditto-assistant/ditto-subnet/commit/5608101715abb2519f53c94d52e9f7860d36a31a))
+
+- **release**: Install uv for model relay gate
+  ([#761](https://github.com/ditto-assistant/ditto-subnet/pull/761),
+  [`3e0579f`](https://github.com/ditto-assistant/ditto-subnet/commit/3e0579f9aa7fc9ebb2ff61ac323b31c4084bdc7e))
+
+- **release**: Reject stale candidates before parallel verification
+  ([#753](https://github.com/ditto-assistant/ditto-subnet/pull/753),
+  [`c368071`](https://github.com/ditto-assistant/ditto-subnet/commit/c3680718357f095208414b7b632c9d41bbedd89c))
+
+- **release**: Route bottlenecks to 8-core runner
+  ([#760](https://github.com/ditto-assistant/ditto-subnet/pull/760),
+  [`fb0bb77`](https://github.com/ditto-assistant/ditto-subnet/commit/fb0bb77545c94c57cf942b9722f93d6fbd585547))
+
+- **scoring**: Keep quality primary in efficiency order
+  ([#758](https://github.com/ditto-assistant/ditto-subnet/pull/758),
+  [`a66b3b0`](https://github.com/ditto-assistant/ditto-subnet/commit/a66b3b0aa65469c639258a0daae15bf7ce05b1ab))
+
+### Chores
+
+- **ci**: Shard Platform pull request checks
+  ([#759](https://github.com/ditto-assistant/ditto-subnet/pull/759),
+  [`1af548d`](https://github.com/ditto-assistant/ditto-subnet/commit/1af548dd8b47b804eaa3632918d9e26cf7127fad))
+
+- **ci**: Share Platform verification with releases
+  ([#765](https://github.com/ditto-assistant/ditto-subnet/pull/765),
+  [`6bea621`](https://github.com/ditto-assistant/ditto-subnet/commit/6bea62124c7d958e188260bac9b7b85f4b5f8186))
+
+### Features
+
+- **release**: Prefetch signed validator stack candidates
+  ([#754](https://github.com/ditto-assistant/ditto-subnet/pull/754),
+  [`99393ba`](https://github.com/ditto-assistant/ditto-subnet/commit/99393bab3cc8cb8f0892e915452131da40286392))
+
+
 ## v0.61.4 (2026-08-14)
 
 ### Bug Fixes
