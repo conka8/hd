@@ -2,6 +2,27 @@
 
 <!-- version list -->
 
+## v0.58.1 (2026-08-14)
+
+### Bug Fixes
+
+- **dittobench**: Remove validator cloud secret runtime
+  ([#716](https://github.com/ditto-assistant/ditto-subnet/pull/716),
+  [`1edee93`](https://github.com/ditto-assistant/ditto-subnet/commit/1edee93705ec088bc3cc6b1cd794e5437b76fbfb))
+
+- **platform**: Bound public handler round trips
+  ([#711](https://github.com/ditto-assistant/ditto-subnet/pull/711),
+  [`abd54cc`](https://github.com/ditto-assistant/ditto-subnet/commit/abd54cc9dcc72ddbb94d9597f3c5cf2f8bf5619b))
+
+- **platform**: Collapse confirmation replay admission
+  ([#712](https://github.com/ditto-assistant/ditto-subnet/pull/712),
+  [`bbf3df8`](https://github.com/ditto-assistant/ditto-subnet/commit/bbf3df8c19453d063faa4f99b0e7e4add30f4d8e))
+
+- **screener**: Stop quarantining a targeted API-key read as exfiltration
+  ([#717](https://github.com/ditto-assistant/ditto-subnet/pull/717),
+  [`c6e37f4`](https://github.com/ditto-assistant/ditto-subnet/commit/c6e37f46bd395cf83ddcab888ed92ed8af164086))
+
+
 ## v0.58.0 (2026-08-14)
 
 ### Features
