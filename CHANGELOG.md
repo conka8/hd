@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.61.0 (2026-08-14)
+
+### Features
+
+- **platform**: Rewrite model relay in Go with binary release pipeline
+  ([#742](https://github.com/ditto-assistant/ditto-subnet/pull/742),
+  [`bb5b3a3`](https://github.com/ditto-assistant/ditto-subnet/commit/bb5b3a3b97b5ae200477c58c98c10a2323f525f8))
+
+
 ## v0.60.1 (2026-08-14)
 
 ### Bug Fixes
