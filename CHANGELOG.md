@@ -2,6 +2,23 @@
 
 <!-- version list -->
 
+## v0.61.4 (2026-08-14)
+
+### Bug Fixes
+
+- **dittobench**: Unblock LongMem shadow diagnostics
+  ([#752](https://github.com/ditto-assistant/ditto-subnet/pull/752),
+  [`3f2e288`](https://github.com/ditto-assistant/ditto-subnet/commit/3f2e2883e757d361745856daecc77262bd5a1178))
+
+- **platform**: Narrow the crown-anchor band
+  ([#748](https://github.com/ditto-assistant/ditto-subnet/pull/748),
+  [`b0370d8`](https://github.com/ditto-assistant/ditto-subnet/commit/b0370d8a017b865104a1d94207b333eee5feac0d))
+
+- **platform**: Publish the KOTH crown anchor
+  ([#747](https://github.com/ditto-assistant/ditto-subnet/pull/747),
+  [`93c4ac3`](https://github.com/ditto-assistant/ditto-subnet/commit/93c4ac3037981c12378d3505afa32763caf1e9f3))
+
+
 ## v0.61.3 (2026-08-14)
 
 ### Bug Fixes
