@@ -2,6 +2,27 @@
 
 <!-- version list -->
 
+## v0.60.0 (2026-08-14)
+
+### Bug Fixes
+
+- **validator**: Prevent continual retest resets
+  ([#738](https://github.com/ditto-assistant/ditto-subnet/pull/738),
+  [`1c356b3`](https://github.com/ditto-assistant/ditto-subnet/commit/1c356b3ef994ef280c00b9a941d405688413b143))
+
+### Chores
+
+- **tests**: Preserve paused continual retest lease
+  ([#740](https://github.com/ditto-assistant/ditto-subnet/pull/740),
+  [`f131009`](https://github.com/ditto-assistant/ditto-subnet/commit/f131009fa1f08523e7eb25e09e25409c0521a078))
+
+### Features
+
+- **platform**: Add validator issuance pauses
+  ([#737](https://github.com/ditto-assistant/ditto-subnet/pull/737),
+  [`551f4ee`](https://github.com/ditto-assistant/ditto-subnet/commit/551f4ee9b179a3127f1ed29fcaad510c3e3fc3b6))
+
+
 ## v0.59.1 (2026-08-14)
 
 ### Bug Fixes
