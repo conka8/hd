@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.60.1 (2026-08-14)
+
+### Bug Fixes
+
+- **platform**: Align public emissions with owner-ranked board
+  ([#739](https://github.com/ditto-assistant/ditto-subnet/pull/739),
+  [`d6bc0f3`](https://github.com/ditto-assistant/ditto-subnet/commit/d6bc0f3fc3b07b2dd57d27fb0c533dcb642c743f))
+
+- **validator**: Preserve one-seed confirmation stderr
+  ([#741](https://github.com/ditto-assistant/ditto-subnet/pull/741),
+  [`9a877ad`](https://github.com/ditto-assistant/ditto-subnet/commit/9a877ad964d560ec6f48a7e818219a38f8409110))
+
+
 ## v0.60.0 (2026-08-14)
 
 ### Bug Fixes
