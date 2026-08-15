@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v0.67.0 (2026-08-15)
+
+### Bug Fixes
+
+- **release**: Pin profiler compatibility source
+  ([#795](https://github.com/ditto-assistant/ditto-subnet/pull/795),
+  [`b0f0b79`](https://github.com/ditto-assistant/ditto-subnet/commit/b0f0b79c4cbfb67eecad3a663cb6d38a3c7aec14))
+
+### Features
+
+- **miner-cli**: Offer inline hotkey registration on a 1101 pre-check
+  ([#776](https://github.com/ditto-assistant/ditto-subnet/pull/776),
+  [`7c3b62e`](https://github.com/ditto-assistant/ditto-subnet/commit/7c3b62ee7516229208404702e0fd9154d10d05aa))
+
+- **platform**: Raise inference concurrency ceiling to 512
+  ([#797](https://github.com/ditto-assistant/ditto-subnet/pull/797),
+  [`532bd7a`](https://github.com/ditto-assistant/ditto-subnet/commit/532bd7af7abe9c1461342b1a64144ff6172560cf))
+
+
 ## v0.66.3 (2026-08-15)
 
 ### Bug Fixes
