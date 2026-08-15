@@ -76,6 +76,28 @@ _UNCHANGED_PROGRESS_TIMEOUT_SECONDS = 15 * 60.0
 _SCORER_ADMISSION_RETRY_SECONDS = 5 * 60.0
 _SCORER_ADMISSION_MAX_BACKOFF_SECONDS = 15.0
 
+_CONFIRMATION_FAILURE_CLASS_HEADER = "X-Ditto-Confirmation-Failure-Class"
+_CONFIRMATION_FAILURE_STATUS_HEADER = "X-Ditto-Confirmation-Failure-Status"
+_CONFIRMATION_ZERO_STATUS_FAILURES = frozenset(
+    {
+        "longmem_seed_request",
+        "longmem_seed_response_too_large",
+        "longmem_seed_incomplete_ack",
+        "longmem_run_request",
+        "longmem_run_response_too_large",
+        "longmem_run_missing_final_text",
+    }
+)
+_CONFIRMATION_HTTP_STATUS_FAILURES = frozenset(
+    {"longmem_seed_http_status", "longmem_run_http_status"}
+)
+_CONFIRMATION_MALFORMED_STATUS_FAILURES = frozenset(
+    {"longmem_seed_malformed_json", "longmem_run_malformed_json"}
+)
+_CONFIRMATION_RESPONSE_READ_FAILURES = frozenset(
+    {"longmem_seed_response_read", "longmem_run_response_read"}
+)
+
 _PROGRESS_STAGE_BY_STATUS: dict[str, BenchmarkProgressStage] = {
     "queued": "preparing",
     "building": "building_harness",
@@ -99,6 +121,45 @@ _PROGRESS_STAGE_ORDER: dict[BenchmarkProgressStage, int] = {
     "submitting_result": 6,
     "failed_retrying": 7,
 }
+
+
+def _confirmation_failure_diagnostic(response: httpx.Response) -> str:
+    """Return one bounded scorer diagnostic, or nothing for any drift.
+
+    The confirmation response body deliberately remains stage-only. These
+    purpose-specific headers cross only the protected local scorer boundary,
+    and are accepted solely when their class/status pair matches a shape the
+    Go scorer can emit from its reviewed allowlist.
+    """
+    failure_class = response.headers.get(_CONFIRMATION_FAILURE_CLASS_HEADER)
+    raw_status = response.headers.get(_CONFIRMATION_FAILURE_STATUS_HEADER)
+    if failure_class is None or raw_status is None:
+        return ""
+    if (
+        not raw_status
+        or len(raw_status) > 3
+        or not raw_status.isascii()
+        or not raw_status.isdecimal()
+    ):
+        return ""
+    status = int(raw_status)
+    if raw_status != str(status) or status > 599:
+        return ""
+    if failure_class in _CONFIRMATION_ZERO_STATUS_FAILURES:
+        valid = status == 0
+    elif failure_class in _CONFIRMATION_HTTP_STATUS_FAILURES:
+        valid = 100 <= status <= 599
+    elif failure_class in _CONFIRMATION_MALFORMED_STATUS_FAILURES:
+        valid = 200 <= status <= 299
+    elif failure_class in _CONFIRMATION_RESPONSE_READ_FAILURES:
+        valid = status == 0 or 100 <= status <= 599
+    else:
+        valid = False
+    if not valid:
+        return ""
+    return f" [failure_class={failure_class} failure_status={status}]"
+
+
 _SOURCE_REVISION = re.compile(r"^[0-9a-f]{40}$")
 _SOFTWARE_VERSION = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._+/-]{0,63}$")
 
@@ -491,9 +552,10 @@ class DittobenchClient:
                 f"v9 confirmation execution failed: {error}"
             ) from error
         if response.status_code != 200:
+            diagnostic = _confirmation_failure_diagnostic(response)
             raise DittobenchError(
                 "v9 confirmation execution rejected "
-                f"({response.status_code}): {response.text[:200]}"
+                f"({response.status_code}): {response.text[:200]}{diagnostic}"
             )
         try:
             return V9ConfirmationScorerResult.model_validate(response.json())

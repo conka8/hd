@@ -43,7 +43,7 @@ from ditto.api_models.validator_confirmation import (
     V9ConfirmationSubmitResponse,
 )
 from ditto.validator import worker as worker_module
-from ditto.validator.dittobench import InferenceBrokerSession
+from ditto.validator.dittobench import DittobenchClient, InferenceBrokerSession
 from ditto.validator.errors import DittobenchError, PlatformError
 from ditto.validator.platform import PlatformClient
 from ditto.validator.signing import (
@@ -374,6 +374,113 @@ def _artifact_payload() -> dict[str, Any]:
         "screened_image_id": f"sha256:{image_sha}",
         "screened_image_ref": "ditto-screen/agent:v9",
     }
+
+
+@pytest.mark.asyncio
+async def test_scorer_failure_diagnostic_reaches_validator_log_boundary() -> None:
+    job = _job().model_copy(update={"deadline": datetime.now(UTC) + timedelta(hours=1)})
+    artifact = ArtifactResponse.model_validate(_artifact_payload())
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            422,
+            json={"error": "confirmation execution failed at dimension_execution"},
+            headers={
+                "X-Ditto-Confirmation-Failure-Class": "longmem_run_http_status",
+                "X-Ditto-Confirmation-Failure-Status": "500",
+            },
+        )
+
+    config = cast(
+        Any,
+        SimpleNamespace(
+            dittobench_api_url="http://dittobench.test",
+            dittobench_control_token="control-token",
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = DittobenchClient(config, http)
+        with pytest.raises(DittobenchError) as raised:
+            await client.execute_v9_confirmation(
+                job=job,
+                artifact=artifact,
+                inference_session_id=_CONFIRMATION_SESSION.session_id,
+            )
+
+    message = str(raised.value)
+    assert "confirmation execution failed at dimension_execution" in message
+    assert "failure_class=longmem_run_http_status failure_status=500" in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("headers", "forbidden"),
+    [
+        ({}, "failure_class="),
+        (
+            {"X-Ditto-Confirmation-Failure-Class": "private-arbitrary-class"},
+            "private-arbitrary-class",
+        ),
+        (
+            {
+                "X-Ditto-Confirmation-Failure-Class": "longmem_run_http_status",
+                "X-Ditto-Confirmation-Failure-Status": "0",
+            },
+            "failure_class=",
+        ),
+        (
+            {
+                "X-Ditto-Confirmation-Failure-Class": "longmem_run_missing_final_text",
+                "X-Ditto-Confirmation-Failure-Status": "500",
+            },
+            "failure_class=",
+        ),
+        (
+            {
+                "X-Ditto-Confirmation-Failure-Class": "longmem_run_http_status",
+                "X-Ditto-Confirmation-Failure-Status": "+500",
+            },
+            "failure_class=",
+        ),
+        (
+            {
+                "X-Ditto-Confirmation-Failure-Class": "longmem_run_http_status",
+                "X-Ditto-Confirmation-Failure-Status": "9" * 5_000,
+            },
+            "failure_class=",
+        ),
+    ],
+)
+async def test_scorer_failure_diagnostic_rejects_header_drift(
+    headers: dict[str, str], forbidden: str
+) -> None:
+    job = _job().model_copy(update={"deadline": datetime.now(UTC) + timedelta(hours=1)})
+    artifact = ArtifactResponse.model_validate(_artifact_payload())
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            422,
+            json={"error": "confirmation execution failed at dimension_execution"},
+            headers=headers,
+        )
+
+    config = cast(
+        Any,
+        SimpleNamespace(
+            dittobench_api_url="http://dittobench.test",
+            dittobench_control_token="control-token",
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = DittobenchClient(config, http)
+        with pytest.raises(DittobenchError) as raised:
+            await client.execute_v9_confirmation(
+                job=job,
+                artifact=artifact,
+                inference_session_id=_CONFIRMATION_SESSION.session_id,
+            )
+
+    assert forbidden not in str(raised.value)
 
 
 def _submit_response(*, replayed: bool = False) -> dict[str, Any]:
