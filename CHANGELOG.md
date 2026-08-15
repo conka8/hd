@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.65.1 (2026-08-15)
+
+### Bug Fixes
+
+- **platform**: Cache fresh scoring ledgers
+  ([#790](https://github.com/ditto-assistant/ditto-subnet/pull/790),
+  [`6aa42e2`](https://github.com/ditto-assistant/ditto-subnet/commit/6aa42e2d58aee11c82adc3451596846acf73ce38))
+
+- **release**: Shard root source verification
+  ([#788](https://github.com/ditto-assistant/ditto-subnet/pull/788),
+  [`9a37da3`](https://github.com/ditto-assistant/ditto-subnet/commit/9a37da381067c5ad2d0e170baa244abc5466a57a))
+
+
 ## v0.65.0 (2026-08-14)
 
 ### Features
