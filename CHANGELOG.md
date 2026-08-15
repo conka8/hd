@@ -2,6 +2,20 @@
 
 <!-- version list -->
 
+## v0.68.21 (2026-08-15)
+
+### Bug Fixes
+
+- **scoring**: Surface safe confirmation diagnostics
+  ([`18b04c8`](https://github.com/ditto-assistant/ditto-subnet/commit/18b04c8d9c486c29edec50efed8463ec73315926))
+
+### Chores
+
+- **perf**: Harden profiling evidence workflow
+  ([#834](https://github.com/ditto-assistant/ditto-subnet/pull/834),
+  [`3847967`](https://github.com/ditto-assistant/ditto-subnet/commit/3847967190a3dc310de0b3360cfb4d9cee100185))
+
+
 ## v0.68.20 (2026-08-15)
 
 ### Bug Fixes
