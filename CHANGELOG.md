@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v0.68.0 (2026-08-15)
+
+### Bug Fixes
+
+- **platform**: Accept LongMem embedding provider slug
+  ([#803](https://github.com/ditto-assistant/ditto-subnet/pull/803),
+  [`0f766b4`](https://github.com/ditto-assistant/ditto-subnet/commit/0f766b41779d60e3f98128879bcbf2208cd88303))
+
+- **platform**: Reuse queue preview owner aliases
+  ([#801](https://github.com/ditto-assistant/ditto-subnet/pull/801),
+  [`7d3221a`](https://github.com/ditto-assistant/ditto-subnet/commit/7d3221a9c25b94b117ac7cc0294aa9acc056059d))
+
+- **release**: Retire completed WSL updater bootstrap
+  ([#800](https://github.com/ditto-assistant/ditto-subnet/pull/800),
+  [`8e5112e`](https://github.com/ditto-assistant/ditto-subnet/commit/8e5112ea83ad6d37198dc21122af397ffc01e5b3))
+
+### Features
+
+- **dittobench**: Add relay delay-fingerprint shadow evidence for per-case model use
+  ([#802](https://github.com/ditto-assistant/ditto-subnet/pull/802),
+  [`e46bc53`](https://github.com/ditto-assistant/ditto-subnet/commit/e46bc5398f953593180812879da280a1995c9525))
+
+- **validator**: Report managed updater status
+  ([#777](https://github.com/ditto-assistant/ditto-subnet/pull/777),
+  [`22fb4bb`](https://github.com/ditto-assistant/ditto-subnet/commit/22fb4bb8b6f5cfc757000d659fae0569f87bab19))
+
+
 ## v0.67.1 (2026-08-15)
 
 ### Bug Fixes
