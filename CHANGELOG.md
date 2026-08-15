@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.66.2 (2026-08-15)
+
+### Bug Fixes
+
+- **dittobench**: Accept ticket-scoped LongMem proxy
+  ([#796](https://github.com/ditto-assistant/ditto-subnet/pull/796),
+  [`f181faf`](https://github.com/ditto-assistant/ditto-subnet/commit/f181fafc08932ce5c79239950de8997a58d1d75a))
+
+
 ## v0.66.1 (2026-08-15)
 
 ### Bug Fixes
