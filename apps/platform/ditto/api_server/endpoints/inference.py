@@ -2306,9 +2306,20 @@ async def proxy_confirmation_chat_completions(
             headers=_openrouter_headers(
                 config.openrouter_api_key, include_metadata=True
             ),
-            retry_backpressure=False,
+            # Keep all retries on the exact purpose-bound provider route. The
+            # shared loop is bounded and still fails closed on ambiguous reads.
+            retry_backpressure=True,
         )
         if result.response.status_code >= 400:
+            logger.warning(
+                "confirmation provider rejected request",
+                extra={
+                    "confirmation_lane": grant.lane,
+                    "upstream_status": result.response.status_code,
+                    "upstream_attempts": result.attempts,
+                    "provider_backpressure": _provider_is_backpressure(result.response),
+                },
+            )
             raise HTTPException(
                 status_code=502, detail="confirmation provider unavailable"
             )
@@ -2332,6 +2343,16 @@ async def proxy_confirmation_chat_completions(
         trusted_usage["cost"] = cost_microusd / 1_000_000
         raw = json.dumps(trusted, separators=(",", ":")).encode()
         status = "completed"
+    except _ProviderCallError as error:
+        logger.warning(
+            "confirmation provider transport failed",
+            extra={
+                "confirmation_lane": grant.lane,
+                "upstream_attempts": error.attempts,
+                "provider_timed_out": error.timed_out,
+            },
+        )
+        raise
     except ValueError as error:
         raise HTTPException(
             status_code=502, detail="invalid provider response"
