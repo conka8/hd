@@ -660,10 +660,26 @@ func (d *Deps) handleConfirmationChatCompletions(w http.ResponseWriter, r *http.
 		// Retry explicit provider backpressure in place. Every attempt keeps the
 		// same frozen provider route and request payload, so this does not widen
 		// the capability or permit a fallback provider. The shared retry loop is
-		// bounded to providerMaxAttempts and fails closed on ambiguous reads.
-		result, callErr := postProviderWithRetry(ctx, d.Upstream, cfg.UpstreamURL, upstreamPayload,
+		// bounded to seven attempts / 80 seconds for receipt-free reader 429s.
+		// The judge and every other status retain the pre-existing three-attempt
+		// behavior; ambiguous reader responses always fail closed.
+		backpressureMaxAttempts := providerMaxAttempts
+		var maxElapsed time.Duration
+		if grantSnapshot.Lane == "reader" {
+			backpressureMaxAttempts = confirmationReaderBackpressureMaxAttempts
+			maxElapsed = confirmationReaderBackpressureMaxElapsed
+		}
+		result, callErr := postProviderWithRetryPolicy(ctx, d.Upstream, cfg.UpstreamURL, upstreamPayload,
 			openrouterHeaders(cfg.OpenRouterAPIKey, true), cfg.ResponseBodyBytes, cfg.TimeoutSeconds,
-			true, expectedModel, d.sleep())
+			providerRetryPolicy{
+				retryBackpressure:              true,
+				retryPreProviderNotFoundModel:  expectedModel,
+				backpressureMaxAttempts:        backpressureMaxAttempts,
+				requireReceiptFreeBackpressure: grantSnapshot.Lane == "reader",
+				receiptFreeExpectedModel:       expectedModel,
+				receiptFreeExpectedProvider:    result.grant.RouteProvider,
+				maxElapsed:                     maxElapsed,
+			}, d.sleep())
 		if callErr != nil {
 			d.Logger.Warn("confirmation provider transport failed",
 				slog.String("lane", grantSnapshot.Lane),

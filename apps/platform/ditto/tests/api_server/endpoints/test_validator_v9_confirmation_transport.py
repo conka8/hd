@@ -13,7 +13,7 @@ import base64
 import copy
 import hashlib
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -770,6 +770,8 @@ class TestV9ConfirmationChatProxy:
         _enable_confirmation_proxy(app)
         body, headers = _confirmation_chat_request(offer, signer)
         upstream_calls = 0
+        upstream_bodies: list[bytes] = []
+        sleeps: list[float] = []
         retry_backpressure_values: list[bool] = []
         original_post = inference_mod._post_provider_with_retry
 
@@ -781,11 +783,16 @@ class TestV9ConfirmationChatProxy:
             headers: dict[str, str],
             retry_backpressure: bool = True,
             retry_pre_provider_not_found_model: str | None = None,
+            backpressure_max_attempts: int = inference_mod._PROVIDER_MAX_ATTEMPTS,
+            require_receipt_free_backpressure: bool = False,
+            receipt_free_expected_model: str = "",
+            receipt_free_expected_provider: str = "",
+            max_elapsed_seconds: float | None = None,
         ) -> Any:
             retry_backpressure_values.append(retry_backpressure)
 
-            async def no_sleep(_: float) -> None:
-                return None
+            async def record_sleep(delay: float) -> None:
+                sleeps.append(delay)
 
             return await original_post(
                 provider_client,
@@ -794,7 +801,12 @@ class TestV9ConfirmationChatProxy:
                 headers=headers,
                 retry_backpressure=retry_backpressure,
                 retry_pre_provider_not_found_model=(retry_pre_provider_not_found_model),
-                sleep=no_sleep,
+                backpressure_max_attempts=backpressure_max_attempts,
+                require_receipt_free_backpressure=require_receipt_free_backpressure,
+                receipt_free_expected_model=receipt_free_expected_model,
+                receipt_free_expected_provider=receipt_free_expected_provider,
+                max_elapsed_seconds=max_elapsed_seconds,
+                sleep=record_sleep,
             )
 
         monkeypatch.setattr(inference_mod, "_post_provider_with_retry", no_delay_post)
@@ -802,6 +814,7 @@ class TestV9ConfirmationChatProxy:
         async def provider(request: httpx.Request) -> httpx.Response:
             nonlocal upstream_calls
             upstream_calls += 1
+            upstream_bodies.append(request.content)
             payload = json.loads(request.content)
             assert payload["provider"] == {
                 "only": ["deepinfra"],
@@ -811,12 +824,19 @@ class TestV9ConfirmationChatProxy:
                 "data_collection": "deny",
                 "zdr": True,
             }
-            if upstream_calls == 1:
+            if upstream_calls < 7:
+                retry_after = (
+                    "120"
+                    if upstream_calls == 1
+                    else "invalid"
+                    if upstream_calls == 2
+                    else "1"
+                )
                 return httpx.Response(
                     429,
                     request=request,
-                    headers={"Retry-After": "120"},
-                    json={"error": "rate limited"},
+                    headers={"Retry-After": retry_after},
+                    json={"error": {"code": 429, "message": "rate limited"}},
                 )
             return httpx.Response(
                 200,
@@ -854,7 +874,9 @@ class TestV9ConfirmationChatProxy:
             )
 
         assert response.status_code == 200, response.text
-        assert upstream_calls == 2
+        assert upstream_calls == 7
+        assert all(item == upstream_bodies[0] for item in upstream_bodies)
+        assert sleeps == [60.0, 10.0, 1.0, 1.0, 1.0, 1.0]
         assert retry_backpressure_values == [True]
         async with session_maker() as session:
             request_rows = list(
@@ -879,6 +901,181 @@ class TestV9ConfirmationChatProxy:
             assert grant.prompt_tokens == 5
             assert grant.completion_tokens == 1
             assert grant.cost_microusd == 10
+
+    async def test_reader_backpressure_exhaustion_settles_one_failed_request(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        session_maker: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        offers, signer = await _claim_installed_profile_offers(
+            app, client, session_maker
+        )
+        offer = next(item for item in offers if item["lane"] == "reader")
+        app.state.session_maker = session_maker
+        _enable_confirmation_proxy(app)
+        body, headers = _confirmation_chat_request(offer, signer)
+        upstream_calls = 0
+        original_post = inference_mod._post_provider_with_retry
+
+        async def no_delay_post(
+            provider_client: httpx.AsyncClient,
+            url: str,
+            *,
+            payload: dict[str, Any],
+            headers: dict[str, str],
+            retry_backpressure: bool = True,
+            retry_pre_provider_not_found_model: str | None = None,
+            backpressure_max_attempts: int = inference_mod._PROVIDER_MAX_ATTEMPTS,
+            require_receipt_free_backpressure: bool = False,
+            receipt_free_expected_model: str = "",
+            receipt_free_expected_provider: str = "",
+            max_elapsed_seconds: float | None = None,
+        ) -> Any:
+            async def no_sleep(_: float) -> None:
+                return None
+
+            return await original_post(
+                provider_client,
+                url,
+                payload=payload,
+                headers=headers,
+                retry_backpressure=retry_backpressure,
+                retry_pre_provider_not_found_model=retry_pre_provider_not_found_model,
+                backpressure_max_attempts=backpressure_max_attempts,
+                require_receipt_free_backpressure=require_receipt_free_backpressure,
+                receipt_free_expected_model=receipt_free_expected_model,
+                receipt_free_expected_provider=receipt_free_expected_provider,
+                max_elapsed_seconds=max_elapsed_seconds,
+                sleep=no_sleep,
+            )
+
+        monkeypatch.setattr(inference_mod, "_post_provider_with_retry", no_delay_post)
+
+        async def provider(request: httpx.Request) -> httpx.Response:
+            nonlocal upstream_calls
+            upstream_calls += 1
+            return httpx.Response(
+                429,
+                request=request,
+                headers={"Retry-After": "1"},
+                json={"error": {"code": 429, "message": "rate limited"}},
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(provider)
+        ) as provider_client:
+            app.state.inference_client = provider_client
+            response = await client.post(
+                "/api/v1/inference/confirmation/chat/completions",
+                content=body,
+                headers=headers,
+            )
+
+        assert response.status_code == 502, response.text
+        assert upstream_calls == 7
+        async with session_maker() as session:
+            request_rows = list(
+                await session.scalars(
+                    select(ConfirmationInferenceRequest).where(
+                        ConfirmationInferenceRequest.grant_id == UUID(offer["grant_id"])
+                    )
+                )
+            )
+            grant = await session.get(
+                ConfirmationInferenceGrant, UUID(offer["grant_id"])
+            )
+            assert len(request_rows) == 1
+            request_row = request_rows[0]
+            assert request_row.status == "failed"
+            assert request_row.prompt_tokens == request_row.reserved_tokens
+            assert request_row.completion_tokens == 0
+            assert request_row.cost_microusd == 0
+            assert request_row.upstream_provider is None
+            assert grant is not None
+            assert grant.request_count == 1
+            assert grant.active_requests == 0
+            assert grant.prompt_tokens == request_row.reserved_tokens
+            assert grant.completion_tokens == 0
+            assert grant.cost_microusd == 0
+
+    async def test_reader_does_not_retry_ambiguous_backpressure_shapes(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        session_maker: async_sessionmaker[AsyncSession],
+    ) -> None:
+        offers, signer = await _claim_installed_profile_offers(
+            app, client, session_maker
+        )
+        offer = next(item for item in offers if item["lane"] == "reader")
+        app.state.session_maker = session_maker
+        _enable_confirmation_proxy(app)
+        responses = [
+            {
+                "error": {"code": 429, "message": "rate limited"},
+                "billing": {"amount_microusd": 0},
+            },
+            {
+                "error": {"code": 429, "message": "rate limited"},
+                "openrouter_metadata": {
+                    "requested": offer["model"],
+                    "strategy": "direct",
+                    "attempt": 0,
+                    "endpoints": {
+                        "total": 1,
+                        "available": [
+                            {
+                                "provider": "Azure",
+                                "model": offer["model"],
+                                "selected": False,
+                            }
+                        ],
+                    },
+                },
+            },
+        ]
+        upstream_calls = 0
+
+        async def provider(request: httpx.Request) -> httpx.Response:
+            nonlocal upstream_calls
+            response_payload = responses[upstream_calls]
+            upstream_calls += 1
+            return httpx.Response(429, request=request, json=response_payload)
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(provider)
+        ) as provider_client:
+            app.state.inference_client = provider_client
+            for expected_calls in range(1, len(responses) + 1):
+                body, headers = _confirmation_chat_request(offer, signer)
+                response = await client.post(
+                    "/api/v1/inference/confirmation/chat/completions",
+                    content=body,
+                    headers=headers,
+                )
+                assert response.status_code == 502, response.text
+                assert upstream_calls == expected_calls
+
+        async with session_maker() as session:
+            request_rows = list(
+                await session.scalars(
+                    select(ConfirmationInferenceRequest).where(
+                        ConfirmationInferenceRequest.grant_id == UUID(offer["grant_id"])
+                    )
+                )
+            )
+            grant = await session.get(
+                ConfirmationInferenceGrant, UUID(offer["grant_id"])
+            )
+            assert len(request_rows) == 2
+            assert all(row.status == "failed" for row in request_rows)
+            assert grant is not None
+            assert grant.request_count == 2
+            assert grant.active_requests == 0
+            assert grant.completion_tokens == 0
+            assert grant.cost_microusd == 0
 
     async def test_reader_retries_only_documented_pre_provider_route_miss(
         self,
@@ -906,6 +1103,11 @@ class TestV9ConfirmationChatProxy:
             headers: dict[str, str],
             retry_backpressure: bool = True,
             retry_pre_provider_not_found_model: str | None = None,
+            backpressure_max_attempts: int = inference_mod._PROVIDER_MAX_ATTEMPTS,
+            require_receipt_free_backpressure: bool = False,
+            receipt_free_expected_model: str = "",
+            receipt_free_expected_provider: str = "",
+            max_elapsed_seconds: float | None = None,
         ) -> Any:
             async def record_sleep(delay: float) -> None:
                 sleeps.append(delay)
@@ -917,6 +1119,11 @@ class TestV9ConfirmationChatProxy:
                 headers=headers,
                 retry_backpressure=retry_backpressure,
                 retry_pre_provider_not_found_model=(retry_pre_provider_not_found_model),
+                backpressure_max_attempts=backpressure_max_attempts,
+                require_receipt_free_backpressure=require_receipt_free_backpressure,
+                receipt_free_expected_model=receipt_free_expected_model,
+                receipt_free_expected_provider=receipt_free_expected_provider,
+                max_elapsed_seconds=max_elapsed_seconds,
                 sleep=record_sleep,
             )
 
@@ -1128,6 +1335,332 @@ class TestV9ConfirmationChatProxy:
             )
             for body in duplicate_bodies
         )
+
+    async def test_confirmation_backpressure_receipt_proof_fails_closed(
+        self,
+    ) -> None:
+        canonical_metadata = {
+            "requested": "fixed/model",
+            "strategy": "direct",
+            "attempt": 0,
+            "endpoints": {
+                "total": 1,
+                "available": [
+                    {
+                        "provider": "DeepInfra",
+                        "model": "fixed/model",
+                        "selected": False,
+                    }
+                ],
+            },
+        }
+        valid = [
+            httpx.Response(
+                429, content=b'{"error":{"code":429,"message":"rate limited"}}'
+            ),
+            httpx.Response(
+                429,
+                json={
+                    "error": {"code": 429, "message": "rate limited"},
+                    "openrouter_metadata": canonical_metadata,
+                },
+            ),
+        ]
+        invalid = [
+            b"{}",
+            b'{"error":',
+            b'{"error":"rate limited"}',
+            b'{"error":{"code":429}}',
+            b'{"error":{"code":429,"message":""}}',
+            b'{"error":{"code":429,"message":"rate limited",'
+            b'"provider_name":"DeepInfra"}}',
+            b'{"error":{"code":429,"message":"rate limited"},'
+            b'"billing":{"amount_microusd":0}}',
+            b'{"error":{"code":429,"message":"rate limited"},"response_id":"r"}',
+            b'{"error":{"code":429,"message":"rate limited"},"token_usage":{}}',
+            b'{"error":{"code":503,"message":"rate limited"}}',
+            b'{"error":"first","error":"second"}',
+            b'{"error":{"code":429,"message":"rate limited"},"usage":{}}',
+            b'{"error":{"code":429,"message":"rate limited","metadata":{"usage":{}}}}',
+            b'{"error":{"code":429,"message":"rate limited"},"cost":0}',
+            b'{"error":{"code":429,"message":"rate limited"},"generation":"gen-1"}',
+            b'{"error":{"code":429,"message":"rate limited"},"generation_id":"gen-1"}',
+            b'{"error":{"code":429,"message":"rate limited"},"provider":"DeepInfra"}',
+            b'{"error":{"code":429,"message":"rate limited"},"choices":[]}',
+            b'{"error":{"code":429,"message":"rate limited"},"receipt":{"id":"r"}}',
+            b'{"error":{"code":429,"message":"rate limited"},"receipt_id":"r"}',
+            b'{"error":{"code":429,"message":"rate limited"},"billed":false}',
+            b'{"error":{"code":429,"message":"rate limited",'
+            b'"metadata":{"charged":false}}}',
+            b'{"error":{"code":429,"message":"rate limited",'
+            b'"metadata":{"provider":"DeepInfra"}}}',
+            b'{"error":{"code":429,"message":"rate limited","metadata":[{"cost":0}]}}',
+            b'{"error":{"code":429,"message":"rate limited",'
+            b'"metadata":{"receipt":"r"}}}',
+            b'{"error":{"code":429,"message":"rate limited",'
+            b'"metadata":[{"choices":[]}]}}',
+            b'{"error":{"code":429,"message":"rate limited"},"value":NaN}',
+            b'{"error":{"code":429,"message":"rate limited"},"value":Infinity}',
+            b'{"error":{"code":429,"message":"rate limited"},"value":-Infinity}',
+            b'{"error":{"code":429,"message":"rate limited"},'
+            b'"openrouter_metadata":{"requested":"fixed/model","strategy":"direct",'
+            b'"attempt":-0,"endpoints":{"total":1,"available":[{"provider":'
+            b'"DeepInfra","model":"fixed/model","selected":false}]}}}',
+        ]
+        invalid_metadata = [
+            {**canonical_metadata, "attempt": 1},
+            {**canonical_metadata, "requested": "other/model"},
+            {**canonical_metadata, "attempts": []},
+            {
+                **canonical_metadata,
+                "endpoints": {
+                    "total": 1,
+                    "available": [
+                        {
+                            "provider": "DeepInfra",
+                            "model": "fixed/model",
+                            "selected": True,
+                        }
+                    ],
+                },
+            },
+            None,
+        ]
+        invalid_metadata.extend(
+            [
+                {
+                    **canonical_metadata,
+                    "endpoints": {
+                        "total": 1,
+                        "available": [
+                            {
+                                "provider": "Azure",
+                                "model": "fixed/model",
+                                "selected": False,
+                            }
+                        ],
+                    },
+                },
+                {
+                    **canonical_metadata,
+                    "endpoints": {
+                        "total": 1,
+                        "available": [
+                            {
+                                "provider": "DeepInfra",
+                                "model": "other/model",
+                                "selected": False,
+                            }
+                        ],
+                    },
+                },
+            ]
+        )
+        assert all(
+            inference_mod._provider_backpressure_is_receipt_free(
+                response,
+                expected_model="fixed/model",
+                expected_provider="deepinfra",
+            )
+            for response in valid
+        )
+        assert all(
+            not inference_mod._provider_backpressure_is_receipt_free(
+                httpx.Response(429, content=body),
+                expected_model="fixed/model",
+                expected_provider="deepinfra",
+            )
+            for body in invalid
+        )
+        assert all(
+            not inference_mod._provider_backpressure_is_receipt_free(
+                httpx.Response(
+                    429,
+                    json={
+                        "error": {"code": 429, "message": "rate limited"},
+                        "openrouter_metadata": metadata,
+                    },
+                ),
+                expected_model="fixed/model",
+                expected_provider="deepinfra",
+            )
+            for metadata in invalid_metadata
+        )
+
+    async def test_confirmation_reader_retry_after_contract(self) -> None:
+        cases = {
+            None: 10.0,
+            "invalid": 10.0,
+            "+1": 10.0,
+            "6_0": 10.0,
+            "６０": 10.0,
+            "0": 10.0,
+            "-3": 10.0,
+            "1": 1.0,
+            "60": 60.0,
+            "120": 60.0,
+            "9223372036854775808": 60.0,
+        }
+        for retry_after, expected in cases.items():
+            headers: httpx.Headers | dict[str, str]
+            if retry_after is None:
+                headers = {}
+            elif retry_after.isascii():
+                headers = {"Retry-After": retry_after}
+            else:
+                headers = httpx.Headers(
+                    [(b"Retry-After", retry_after.encode())], encoding="utf-8"
+                )
+            response = httpx.Response(429, headers=headers)
+            assert (
+                inference_mod._confirmation_reader_backpressure_delay(response)
+                == expected
+            )
+        duplicate = httpx.Response(
+            429,
+            headers=[("Retry-After", "1"), ("Retry-After", "60")],
+        )
+        assert inference_mod._confirmation_reader_backpressure_delay(duplicate) == 10.0
+
+    async def test_judge_and_503_keep_ordinary_retry_cap(self) -> None:
+        async def no_sleep(_: float) -> None:
+            return None
+
+        cases = (
+            (429, 3, False, {"error": "legacy judge rate limit"}),
+            (503, 7, True, {"error": {"code": 503, "message": "capacity"}}),
+        )
+        for status, extended_attempts, require_receipt_free, error_body in cases:
+            calls = 0
+
+            def provider_for(
+                provider_status: int, provider_error: dict[str, Any]
+            ) -> Callable[[httpx.Request], Coroutine[None, None, httpx.Response]]:
+                async def provider(request: httpx.Request) -> httpx.Response:
+                    nonlocal calls
+                    calls += 1
+                    return httpx.Response(
+                        provider_status,
+                        request=request,
+                        json=provider_error,
+                    )
+
+                return provider
+
+            async with httpx.AsyncClient(
+                transport=httpx.MockTransport(provider_for(status, error_body))
+            ) as provider_client:
+                result = await inference_mod._post_provider_with_retry(
+                    provider_client,
+                    "https://provider.invalid/chat",
+                    payload={"model": "fixed/model"},
+                    headers={"Authorization": "redacted"},
+                    backpressure_max_attempts=extended_attempts,
+                    require_receipt_free_backpressure=require_receipt_free,
+                    sleep=no_sleep,
+                )
+            assert result.response.status_code == status
+            assert result.attempts == 3
+            assert calls == 3
+
+    async def test_receipt_bearing_429_is_never_retried(self) -> None:
+        calls = 0
+
+        async def provider(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(
+                429,
+                request=request,
+                json={
+                    "error": {
+                        "code": 429,
+                        "message": "capacity",
+                        "metadata": {"usage": {"prompt_tokens": 1}},
+                    }
+                },
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(provider)
+        ) as provider_client:
+            result = await inference_mod._post_provider_with_retry(
+                provider_client,
+                "https://provider.invalid/chat",
+                payload={"model": "fixed/model"},
+                headers={"Authorization": "redacted"},
+                backpressure_max_attempts=7,
+                require_receipt_free_backpressure=True,
+            )
+        assert result.response.status_code == 429
+        assert result.attempts == 1
+        assert calls == 1
+
+    async def test_reader_backpressure_respects_hard_elapsed_deadline(self) -> None:
+        calls = 0
+
+        async def provider(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(
+                429,
+                request=request,
+                json={"error": {"code": 429, "message": "capacity"}},
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(provider)
+        ) as provider_client:
+            with pytest.raises(inference_mod._ProviderCallError) as exc_info:
+                await inference_mod._post_provider_with_retry(
+                    provider_client,
+                    "https://provider.invalid/chat",
+                    payload={"model": "fixed/model"},
+                    headers={"Authorization": "redacted"},
+                    backpressure_max_attempts=7,
+                    require_receipt_free_backpressure=True,
+                    max_elapsed_seconds=0.01,
+                )
+        assert exc_info.value.timed_out is True
+        assert calls == 1
+
+    async def test_reader_backpressure_propagates_parent_cancellation(self) -> None:
+        calls = 0
+        sleeping = asyncio.Event()
+
+        async def provider(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(
+                429,
+                request=request,
+                json={"error": {"code": 429, "message": "capacity"}},
+            )
+
+        async def blocked_sleep(_: float) -> None:
+            sleeping.set()
+            await asyncio.Event().wait()
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(provider)
+        ) as provider_client:
+            task = asyncio.create_task(
+                inference_mod._post_provider_with_retry(
+                    provider_client,
+                    "https://provider.invalid/chat",
+                    payload={"model": "fixed/model"},
+                    headers={"Authorization": "redacted"},
+                    backpressure_max_attempts=7,
+                    require_receipt_free_backpressure=True,
+                    max_elapsed_seconds=80.0,
+                    sleep=blocked_sleep,
+                )
+            )
+            await sleeping.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert calls == 1
 
     async def test_installed_judge_profile_reaches_zdr_azure_route(
         self,

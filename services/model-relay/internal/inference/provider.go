@@ -11,14 +11,19 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ditto-assistant/model-relay/internal/config"
 )
 
 const (
-	providerMaxAttempts          = 3
-	providerRetryAfterMaxSeconds = 5
+	providerMaxAttempts                        = 3
+	providerRetryAfterMaxSeconds               = 5
+	confirmationReaderBackpressureMaxAttempts  = 7
+	confirmationReaderBackpressureMaxElapsed   = 80 * time.Second
+	confirmationReaderRetryAfterMaxSeconds     = 60
+	confirmationReaderRetryAfterDefaultSeconds = 10
 
 	pplxEmbedContractModel = "perplexity/pplx-embed-v1-0.6b"
 	pplxEmbedResponseModel = "pplx-embed-v1-0.6b"
@@ -62,6 +67,16 @@ type providerCallError struct {
 }
 
 func (e *providerCallError) Error() string { return "provider request failed" }
+
+type providerRetryPolicy struct {
+	retryBackpressure              bool
+	retryPreProviderNotFoundModel  string
+	backpressureMaxAttempts        int
+	requireReceiptFreeBackpressure bool
+	receiptFreeExpectedModel       string
+	receiptFreeExpectedProvider    string
+	maxElapsed                     time.Duration
+}
 
 // providerRetryAfterSeconds mirrors _provider_retry_after_seconds: a bounded
 // backoff hint, clamp(int(Retry-After), 1, 5), non-integer -> 1.
@@ -133,44 +148,260 @@ func classifyTransportError(err error) (dial bool, timeout bool) {
 func postProviderWithRetry(ctx context.Context, client *http.Client, url string, payload any,
 	headers map[string]string, maxBody int64, timeoutSeconds int, retryBackpressure bool,
 	retryPreProviderNotFoundModel string, sleep sleepFunc) (*providerHTTPResult, *providerCallError) {
+	return postProviderWithRetryPolicy(ctx, client, url, payload, headers, maxBody, timeoutSeconds,
+		providerRetryPolicy{
+			retryBackpressure:             retryBackpressure,
+			retryPreProviderNotFoundModel: retryPreProviderNotFoundModel,
+			backpressureMaxAttempts:       providerMaxAttempts,
+		}, sleep)
+}
 
+// postProviderWithRetryPolicy keeps the ordinary provider policy fixed at
+// three attempts while allowing the purpose-bound confirmation reader lane to
+// wait longer only for an explicit, receipt-free 429. Confirmation 503s must
+// also prove they are receipt-free but retain the ordinary attempt budget. No
+// other status or transport class inherits the extended attempt budget.
+func postProviderWithRetryPolicy(ctx context.Context, client *http.Client, url string, payload any,
+	headers map[string]string, maxBody int64, timeoutSeconds int, policy providerRetryPolicy,
+	sleep sleepFunc) (*providerHTTPResult, *providerCallError) {
+
+	retryCtx := ctx
+	if policy.maxElapsed > 0 {
+		var cancel context.CancelFunc
+		retryCtx, cancel = context.WithTimeout(ctx, policy.maxElapsed)
+		defer cancel()
+	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return nil, &providerCallError{attempts: 1, timedOut: false}
 	}
+	maxAttempts := providerMaxAttempts
+	if policy.backpressureMaxAttempts > maxAttempts {
+		maxAttempts = policy.backpressureMaxAttempts
+	}
 	var lastDialTimeout bool
-	for attempt := 1; attempt <= providerMaxAttempts; attempt++ {
-		result, derr := postOnce(ctx, client, url, encoded, headers, maxBody, timeoutSeconds)
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if retryCtx.Err() != nil {
+			return nil, &providerCallError{attempts: max(1, attempt-1), timedOut: true}
+		}
+		result, derr := postOnce(retryCtx, client, url, encoded, headers, maxBody, timeoutSeconds)
 		if derr != nil {
 			dial, timedOut := classifyTransportError(derr)
 			if dial {
 				lastDialTimeout = timedOut
-				if attempt == providerMaxAttempts {
+				if attempt >= providerMaxAttempts {
 					return nil, &providerCallError{attempts: attempt, timedOut: lastDialTimeout}
 				}
-				sleep(ctx, backoffDelay(attempt))
+				sleep(retryCtx, backoffDelay(attempt))
+				if retryCtx.Err() != nil {
+					return nil, &providerCallError{attempts: attempt, timedOut: true}
+				}
 				continue
 			}
 			return nil, &providerCallError{attempts: attempt, timedOut: timedOut}
 		}
 		retryableStatus := isProviderRetryStatus(result.status) ||
-			isRetryablePreProviderNotFound(result, retryPreProviderNotFoundModel)
-		if retryableStatus && attempt < providerMaxAttempts &&
-			(retryBackpressure || !providerIsBackpressure(result.status, result.header)) {
-			var delay time.Duration
-			if providerIsBackpressure(result.status, result.header) {
-				delay = time.Duration(providerRetryAfterSeconds(result.header)) * time.Second
-			} else {
-				delay = backoffDelay(attempt)
+			isRetryablePreProviderNotFound(result, policy.retryPreProviderNotFoundModel)
+		attemptLimit := providerMaxAttempts
+		delay := backoffDelay(attempt)
+		confirmationBackpressure := result.status == http.StatusTooManyRequests ||
+			result.status == http.StatusServiceUnavailable
+		if confirmationBackpressure && policy.requireReceiptFreeBackpressure {
+			if !providerBackpressureIsReceiptFree(result, policy.receiptFreeExpectedModel, policy.receiptFreeExpectedProvider) {
+				result.attempts = attempt
+				return result, nil
 			}
-			sleep(ctx, delay)
+			if result.status == http.StatusTooManyRequests &&
+				policy.backpressureMaxAttempts > providerMaxAttempts {
+				attemptLimit = policy.backpressureMaxAttempts
+				delay = confirmationReaderBackpressureDelay(result.header)
+			} else {
+				delay = time.Duration(providerRetryAfterSeconds(result.header)) * time.Second
+			}
+		}
+		if retryableStatus && attempt < attemptLimit &&
+			(policy.retryBackpressure || !providerIsBackpressure(result.status, result.header)) {
+			if !policy.requireReceiptFreeBackpressure && providerIsBackpressure(result.status, result.header) {
+				delay = time.Duration(providerRetryAfterSeconds(result.header)) * time.Second
+			}
+			if deadline, ok := retryCtx.Deadline(); ok {
+				remaining := time.Until(deadline)
+				if remaining <= 0 {
+					return nil, &providerCallError{attempts: attempt, timedOut: true}
+				}
+				if delay > remaining {
+					delay = remaining
+				}
+			}
+			sleep(retryCtx, delay)
+			if retryCtx.Err() != nil {
+				return nil, &providerCallError{attempts: attempt, timedOut: true}
+			}
 			continue
 		}
 		result.attempts = attempt
 		return result, nil
 	}
 	// Unreachable: the loop always returns.
-	return nil, &providerCallError{attempts: providerMaxAttempts, timedOut: false}
+	return nil, &providerCallError{attempts: maxAttempts, timedOut: false}
+}
+
+func confirmationReaderBackpressureDelay(header http.Header) time.Duration {
+	values := header.Values("Retry-After")
+	raw := ""
+	if len(values) == 1 {
+		raw = values[0]
+	}
+	trimmed := strings.TrimSpace(raw)
+	asciiDigits := trimmed != ""
+	for i := 0; i < len(trimmed); i++ {
+		if trimmed[i] < '0' || trimmed[i] > '9' {
+			asciiDigits = false
+			break
+		}
+	}
+	seconds, err := strconv.ParseUint(trimmed, 10, 64)
+	if !asciiDigits {
+		err = strconv.ErrSyntax
+	}
+	if errors.Is(err, strconv.ErrRange) {
+		seconds = confirmationReaderRetryAfterMaxSeconds
+	} else if err != nil || seconds == 0 {
+		seconds = confirmationReaderRetryAfterDefaultSeconds
+	}
+	if seconds > confirmationReaderRetryAfterMaxSeconds {
+		seconds = confirmationReaderRetryAfterMaxSeconds
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// providerBackpressureIsReceiptFree fails closed unless a 429/503 is one JSON
+// object with an error and without any OpenRouter completion, usage, cost, or
+// provider receipt fields. Duplicate keys are rejected by the shared strict
+// decoder so contradictory metadata cannot authorize another billed attempt.
+func providerBackpressureIsReceiptFree(result *providerHTTPResult, expectedModel, expectedProvider string) bool {
+	if result == nil || (result.status != http.StatusTooManyRequests && result.status != http.StatusServiceUnavailable) {
+		return false
+	}
+	decoded, ok := decodeJSONNumbersRejectDuplicateKeys(result.body)
+	if !ok {
+		return false
+	}
+	payload, ok := decoded.(map[string]any)
+	if !ok {
+		return false
+	}
+	if len(payload) < 1 || len(payload) > 2 || !onlyJSONKeys(payload, "error", "openrouter_metadata") {
+		return false
+	}
+	errorPayload, ok := payload["error"].(map[string]any)
+	if !ok || len(errorPayload) != 2 || !onlyJSONKeys(errorPayload, "code", "message") {
+		return false
+	}
+	errorCode, ok := errorPayload["code"].(json.Number)
+	if !ok {
+		return false
+	}
+	errorCodeInt, err := errorCode.Int64()
+	if err != nil || errorCodeInt != int64(result.status) {
+		return false
+	}
+	message, ok := errorPayload["message"].(string)
+	if !ok || strings.TrimSpace(message) == "" {
+		return false
+	}
+	if !providerBackpressureMetadataIsPreProvider(payload, expectedModel, expectedProvider) {
+		return false
+	}
+	withoutMetadata := make(map[string]any, len(payload))
+	for key, value := range payload {
+		if key != "openrouter_metadata" {
+			withoutMetadata[key] = value
+		}
+	}
+	return !providerReceiptFieldPresent(withoutMetadata)
+}
+
+func providerBackpressureMetadataIsPreProvider(payload map[string]any, expectedModel, expectedProvider string) bool {
+	raw, present := payload["openrouter_metadata"]
+	if !present {
+		return true
+	}
+	metadata, ok := raw.(map[string]any)
+	if !ok || !onlyJSONKeys(metadata, "requested", "strategy", "attempt", "endpoints") {
+		return false
+	}
+	requested, requestedOK := metadata["requested"].(string)
+	strategy, strategyOK := metadata["strategy"].(string)
+	attempt, attemptOK := metadata["attempt"].(json.Number)
+	if !requestedOK || requested != expectedModel || !strategyOK || strategy != "direct" || !attemptOK || attempt.String() != "0" {
+		return false
+	}
+	endpoints, ok := metadata["endpoints"].(map[string]any)
+	if !ok || !onlyJSONKeys(endpoints, "total", "available") {
+		return false
+	}
+	total, totalOK := endpoints["total"].(json.Number)
+	available, availableOK := endpoints["available"].([]any)
+	if !totalOK || !availableOK || len(available) == 0 || total.String() != strconv.Itoa(len(available)) {
+		return false
+	}
+	for _, rawEndpoint := range available {
+		endpoint, ok := rawEndpoint.(map[string]any)
+		if !ok || !onlyJSONKeys(endpoint, "provider", "model", "selected") {
+			return false
+		}
+		provider, providerOK := endpoint["provider"].(string)
+		model, modelOK := endpoint["model"].(string)
+		selected, selectedOK := endpoint["selected"].(bool)
+		if !providerOK || !strings.EqualFold(provider, expectedProvider) || !modelOK || model != expectedModel || !selectedOK || selected {
+			return false
+		}
+	}
+	return true
+}
+
+func onlyJSONKeys(payload map[string]any, allowed ...string) bool {
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, key := range allowed {
+		allowedSet[key] = struct{}{}
+	}
+	for key := range payload {
+		if _, ok := allowedSet[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func providerReceiptFieldPresent(value any) bool {
+	forbidden := map[string]struct{}{
+		"id": {}, "generation": {}, "generation_id": {}, "provider": {},
+		"choices": {}, "usage": {}, "cost": {}, "receipt": {}, "receipt_id": {},
+		"attempt": {}, "attempts": {}, "selected": {}, "billed": {}, "charged": {},
+	}
+	var walk func(any) bool
+	walk = func(current any) bool {
+		switch typed := current.(type) {
+		case map[string]any:
+			for key, child := range typed {
+				if _, blocked := forbidden[key]; blocked {
+					return true
+				}
+				if walk(child) {
+					return true
+				}
+			}
+		case []any:
+			for _, child := range typed {
+				if walk(child) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return walk(value)
 }
 
 // isRetryablePreProviderNotFound recognizes OpenRouter's documented
