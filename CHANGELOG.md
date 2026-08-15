@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.67.1 (2026-08-15)
+
+### Bug Fixes
+
+- **release**: Parallelize validator stack gates
+  ([#798](https://github.com/ditto-assistant/ditto-subnet/pull/798),
+  [`85795a7`](https://github.com/ditto-assistant/ditto-subnet/commit/85795a7b983473ebee8466c833a72df7f9e3822e))
+
+- **release**: Restore frozen relay manifest
+  ([#799](https://github.com/ditto-assistant/ditto-subnet/pull/799),
+  [`b4ae0a5`](https://github.com/ditto-assistant/ditto-subnet/commit/b4ae0a553c90639561aec8dd79027bc955ccea95))
+
+
 ## v0.67.0 (2026-08-15)
 
 ### Bug Fixes
