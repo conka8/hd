@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.75.1 (2026-08-15)
+
+### Bug Fixes
+
+- **platform-dashboard**: Clarify held KOTH crowns
+  ([#857](https://github.com/ditto-assistant/ditto-subnet/pull/857),
+  [`55fee45`](https://github.com/ditto-assistant/ditto-subnet/commit/55fee453be110e0991c20740d3862e6fe2541d7f))
+
+
 ## v0.75.0 (2026-08-15)
 
 ### Features
