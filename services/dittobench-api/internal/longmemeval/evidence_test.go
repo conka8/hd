@@ -2,6 +2,7 @@ package longmemeval
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"math"
 	"reflect"
@@ -187,6 +188,54 @@ func TestNewEvidenceRejectsProviderCoverageErrors(t *testing.T) {
 				t.Fatal("bad provider coverage accepted")
 			}
 		})
+	}
+}
+
+func TestOfficialZeroEvidenceRequiresDedicatedAllReceivedFailureAuthorization(t *testing.T) {
+	profile, selection := selectFixture(t)
+	score, err := Aggregate(selection, balancedOutcomes(selection, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers, err := newRecordingMeter(profile).Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewEvidence(profile, selection, artifactDigestA, fixtureLatencyMS, score, providers); err == nil {
+		t.Fatal("ordinary constructor accepted zero-provider evidence")
+	}
+	if _, err := newAllReceivedFailuresEvidence(
+		profile, selection, artifactDigestA, fixtureLatencyMS, score, providers, len(selection.Cases)-1,
+	); err == nil {
+		t.Fatal("partial received-failure provenance accepted")
+	}
+	positiveScore, err := Aggregate(selection, balancedOutcomes(selection, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newAllReceivedFailuresEvidence(
+		profile, selection, artifactDigestA, fixtureLatencyMS, positiveScore, providers, len(selection.Cases),
+	); err == nil {
+		t.Fatal("positive score accepted as official zero")
+	}
+	evidence, err := newAllReceivedFailuresEvidence(
+		profile, selection, artifactDigestA, fixtureLatencyMS, score, providers, len(selection.Cases),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := evidence.Validate(profile, selection); err != nil {
+		t.Fatalf("official zero failed verifier replay: %v", err)
+	}
+	if _, err := evidence.Digest(profile, selection); err != nil {
+		t.Fatalf("official zero failed canonical digest: %v", err)
+	}
+	mixed := append([]ProviderEvidence(nil), providers...)
+	mixed[0] = providerEvidenceFor(profile)[0]
+	if _, err := newAllReceivedFailuresEvidence(
+		profile, selection, artifactDigestA, fixtureLatencyMS, score, mixed, len(selection.Cases),
+	); err == nil {
+		t.Fatal("mixed zero and positive provider lanes accepted")
 	}
 }
 

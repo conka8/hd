@@ -293,7 +293,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("inference broker listen error: %v", err)
 		}
-		if err := newInferenceBrokerHTTPServer("", brokerMux).Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := newInferenceBrokerHTTPServer("", brokerMux, s.broker).Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("inference broker error: %v", err)
 		}
 	}()
@@ -820,13 +820,26 @@ func sandboxStartInfraFailure(err error) *store.Failure {
 // image a second time. The replacement handle resumes normal ownership and
 // releases the tag at the end of the run; Run also releases it on restart
 // failure, so every exit remains bounded.
-func (s *server) stopSandboxForRestart(handle *sandbox.Handle) {
+func (s *server) stopSandboxForRestart(handle *sandbox.Handle) error {
 	if handle == nil {
-		return
+		return errors.New("compatibility sandbox identity is unavailable")
 	}
 	containerOnly := *handle
 	containerOnly.ImageRef = ""
-	s.sandbox.Stop(context.Background(), &containerOnly)
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), confirmationRuntimeCleanupTimeout)
+	err := s.sandbox.StopRetainingImage(cleanupCtx, &containerOnly)
+	cancel()
+	return err
+}
+
+func (s *server) cleanupPartialSandboxStart(handle *sandbox.Handle, image string) error {
+	if err := s.stopSandboxForRestart(handle); err != nil {
+		return err
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), confirmationRuntimeCleanupTimeout)
+	s.sandbox.Release(cleanupCtx, image)
+	cancel()
+	return nil
 }
 
 // screenedImageInfraFailure classifies a build-path error that is the
@@ -1462,22 +1475,60 @@ func (s *server) runSizeJob(ctx context.Context, runID string, req submitRequest
 	harnessURL := req.HarnessURL
 	var handle *sandbox.Handle
 	var runErr error
+	var sourceCapability string
+	strictCleanupOnly := false
 	if image != "" {
+		// Register ownership before Sandbox.Run: an implementation may return a
+		// partial handle with an error, and that process must be strictly removed
+		// before its request-scoped image can be released.
+		defer func() {
+			if handle == nil {
+				return
+			}
+			if sourceCapability != "" {
+				_ = s.broker.revokeSourceCapability(inferenceSessionID, runID, sourceCapability)
+			}
+			if strictCleanupOnly {
+				_ = s.cleanupPartialSandboxStart(handle, image)
+				return
+			}
+			s.finishSandboxRun(runID, handle)
+		}()
 		env := harnessSandboxEnv(req.Env, req.BenchVersion, inferenceSessionID)
+		if inferenceSessionID != "" {
+			sourceCapability, runErr = s.broker.installSourceCapability(inferenceSessionID, runID)
+			if runErr != nil {
+				s.store.Fail(runID, "inference session capability is unavailable")
+				return
+			}
+			env, runErr = harnessSandboxEnvWithCapability(
+				req.Env, req.BenchVersion, platformLockedProvider, inferenceSessionID, sourceCapability,
+			)
+			if runErr != nil {
+				_ = s.broker.revokeSourceCapability(inferenceSessionID, runID, sourceCapability)
+				s.store.Fail(runID, "inference session capability is unavailable")
+				return
+			}
+		}
 		handle, runErr = s.sandbox.Run(ctx, image, env)
 		if runErr != nil {
+			if sourceCapability != "" {
+				_ = s.broker.revokeSourceCapability(inferenceSessionID, runID, sourceCapability)
+				sourceCapability = ""
+			}
+			if handle != nil {
+				if cleanupErr := s.cleanupPartialSandboxStart(handle, image); cleanupErr != nil {
+					strictCleanupOnly = true
+					s.store.Fail(runID, "partial container start isolation unavailable")
+					return
+				}
+				handle = nil
+			}
 			s.store.FailWith(runID, "container start failed: "+runErr.Error(), sandboxStartInfraFailure(runErr))
 			return
 		}
-		// Capture the variable, not the initial pointer: a v8 compatibility
-		// probe may replace this container exactly once before scoring begins.
-		defer func() {
-			if handle != nil {
-				s.finishSandboxRun(runID, handle)
-			}
-		}()
 		if inferenceSessionID != "" {
-			if !s.broker.bindSource(inferenceSessionID, runID, handle.SourceIP) {
+			if !s.broker.bindSourceCapability(inferenceSessionID, runID, handle.SourceIP, sourceCapability) {
 				s.store.Fail(runID, "inference session is unavailable")
 				return
 			}
@@ -1560,19 +1611,63 @@ func (s *server) runSizeJob(ctx context.Context, runID string, req submitRequest
 		}
 		if !routed {
 			oldHandle := handle
-			s.stopSandboxForRestart(oldHandle)
-			handle = nil
-			compatEnv := harnessSandboxEnvForProvider(req.Env, req.BenchVersion, v8CompatLockedProvider, inferenceSessionID)
+			replacementCapability, retiredSourceEpoch, capabilityErr := s.broker.rotateSourceCapability(
+				inferenceSessionID, runID, sourceCapability,
+			)
+			if capabilityErr != nil {
+				s.store.Fail(runID, "inference session compatibility capability is unavailable")
+				return
+			}
+			sourceCapability = replacementCapability
+			if err := s.stopSandboxForRestart(oldHandle); err != nil {
+				_ = s.broker.revokeSourceCapability(inferenceSessionID, runID, sourceCapability)
+				sourceCapability = ""
+				strictCleanupOnly = true
+				s.store.Fail(runID, "compatibility sandbox isolation unavailable")
+				return
+			}
+			drainCtx, drainCancel := context.WithTimeout(context.Background(), confirmationRuntimeCleanupTimeout)
+			drainErr := s.broker.waitSourceEpochDrained(drainCtx, inferenceSessionID, retiredSourceEpoch)
+			drainCancel()
+			if drainErr != nil {
+				_ = s.broker.revokeSourceCapability(inferenceSessionID, runID, sourceCapability)
+				sourceCapability = ""
+				s.store.Fail(runID, "compatibility inference drain unavailable")
+				return
+			}
+			compatEnv, capabilityErr := harnessSandboxEnvWithCapability(
+				req.Env, req.BenchVersion, v8CompatLockedProvider, inferenceSessionID, sourceCapability,
+			)
+			if capabilityErr != nil {
+				_ = s.broker.revokeSourceCapability(inferenceSessionID, runID, sourceCapability)
+				sourceCapability = ""
+				s.store.Fail(runID, "compatibility inference capability is unavailable")
+				return
+			}
 			replacement, err := s.sandbox.Run(ctx, image, compatEnv)
 			if err != nil {
+				_ = s.broker.revokeSourceCapability(inferenceSessionID, runID, sourceCapability)
+				sourceCapability = ""
+				if replacement != nil {
+					handle = replacement
+					if cleanupErr := s.cleanupPartialSandboxStart(replacement, image); cleanupErr != nil {
+						strictCleanupOnly = true
+						s.store.Fail(runID, "partial compatibility container isolation unavailable")
+						return
+					}
+					handle = nil
+				}
 				s.store.FailWith(runID, "compatibility container start failed: "+err.Error(), sandboxStartInfraFailure(err))
 				return
 			}
-			handle = replacement
-			if !s.broker.replaceBoundSource(inferenceSessionID, runID, oldHandle.SourceIP, replacement.SourceIP) {
+			if !s.broker.replaceBoundSourceCapability(
+				inferenceSessionID, runID, oldHandle.SourceIP, replacement.SourceIP, sourceCapability,
+			) {
+				handle = replacement
 				s.store.Fail(runID, "inference session could not move to compatibility sandbox")
 				return
 			}
+			handle = replacement
 			harnessURL = replacement.BaseURL
 			if err := s.waitSandboxHealthy(ctx, replacement, sandboxHealthTimeout); err != nil {
 				s.store.Fail(runID, "compatibility harness never became healthy: "+err.Error())
@@ -2726,6 +2821,36 @@ func harnessSandboxEnvForProvider(reqEnv map[string]string, benchVersion int, pr
 	// the validator's unprivileged UID.
 	env["DITTOBENCH_DB"] = "/tmp/dittobench.db"
 	return env
+}
+
+func harnessSandboxEnvWithCapability(
+	reqEnv map[string]string,
+	benchVersion int,
+	provider string,
+	inferenceSessionID string,
+	capability string,
+) (map[string]string, error) {
+	if strings.TrimSpace(inferenceSessionID) == "" || !canonicalBrokerSourceCapability(capability) {
+		return nil, errors.New("broker source capability is unavailable")
+	}
+	host, err := brokerSourceCapabilityHost(capability)
+	if err != nil {
+		return nil, errors.New("broker source capability is unavailable")
+	}
+	port := envIntDefault("DITTOBENCH_BROKER_PORT", 11436)
+	base := "http://" + host + ":" + strconv.Itoa(port)
+	env := harnessSandboxEnvForProvider(reqEnv, benchVersion, provider, inferenceSessionID)
+	gateway := base + "/v1/inference"
+	env["DITTOBENCH_INFERENCE_BASE_URL"] = gateway
+	env["CHUTES_BASE_URL"] = gateway
+	for _, key := range v8CompatBaseURLKeys {
+		env[key] = gateway
+	}
+	env["CHUTES_API_KEY"] = capability
+	env["OPENAI_API_KEY"] = capability
+	env["OPENROUTER_API_KEY"] = capability
+	env["OLLAMA_BASE_URL"] = base
+	return env, nil
 }
 
 // probeHarnessModelRoute sends one isolated, discarded request through the

@@ -680,6 +680,40 @@ def _validate_longmem(
             raise ConfirmationEvidenceError(
                 f"LongMem provider lane {policy.lane!r} exceeds its frozen cap"
             )
+    zero_lanes = tuple(row.requests == 0 for row in lanes)
+    if any(zero_lanes):
+        exact_zero_rows = all(
+            row.requests == 0
+            and row.successes == 0
+            and row.receipted_requests == 0
+            and row.prompt_tokens == 0
+            and row.completion_tokens == 0
+            and row.total_tokens == 0
+            and row.cost_usd_micros == 0
+            and row.receipt_set_sha256 == ""
+            for row in lanes
+        )
+        exact_zero_score = (
+            evidence.score.longmem_mean_micros == 0
+            and evidence.score.longmem_stderr_micros == 0
+            and all(
+                row.correct == 0 and row.mean_micros == 0
+                for row in evidence.score.per_capability
+            )
+        )
+        if not all(zero_lanes) or not exact_zero_rows or not exact_zero_score:
+            raise ConfirmationEvidenceError(
+                "LongMem zero-provider form is not an exact official zero"
+            )
+    elif any(
+        row.successes == 0
+        or row.receipted_requests != row.requests
+        or len(row.receipt_set_sha256) != 64
+        for row in lanes
+    ):
+        raise ConfirmationEvidenceError(
+            "LongMem positive provider evidence lacks complete receipts"
+        )
     normalized_evidence = evidence.model_copy(update={"provider_evidence": lanes})
     if envelope.evidence_sha256 != evidence_digest(normalized_evidence):
         raise ConfirmationEvidenceError("LongMem evidence digest mismatch")

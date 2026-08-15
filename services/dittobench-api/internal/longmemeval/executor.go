@@ -101,6 +101,7 @@ func (e Executor) Execute(
 	}
 
 	outcomes := make([]Outcome, 0, len(projected))
+	receivedFailures := 0
 	for _, item := range projected {
 		for _, seed := range item.SeedRequests {
 			if err := requireLaneHeadroom(profile, current, ReaderLane); err != nil {
@@ -163,6 +164,7 @@ func (e Executor) Execute(
 			}
 			current = next
 			outcomes = append(outcomes, Outcome{QuestionID: item.questionID, Correct: false})
+			receivedFailures++
 			continue
 		}
 		current = next
@@ -197,17 +199,37 @@ func (e Executor) Execute(
 		return ExecutionResult{}, err
 	}
 	final := snapshotSlice(current)
+	zeroProviderCount := 0
+	var zeroProviderLane string
 	for _, policy := range profile.Providers {
 		observed := current[policy.Lane]
-		if err := ValidateProviderEvidence(policy, observed); err != nil {
+		if zeroProviderCounters(observed) && observed.ReceiptSetSHA256 == "" {
+			zeroProviderCount++
+			zeroProviderLane = policy.Lane
+		}
+		if err := validateBudgetSnapshot(policy, observed); err != nil {
 			return ExecutionResult{}, fmt.Errorf("LongMemEval final provider evidence: %w", err)
 		}
 	}
+	if zeroProviderCount != 0 && zeroProviderCount != len(profile.Providers) {
+		return ExecutionResult{}, fmt.Errorf(
+			"LongMemEval final provider evidence: lane %q is zero while another frozen lane is positive",
+			zeroProviderLane,
+		)
+	}
+	zeroProviders := zeroProviderCount == len(profile.Providers)
 	elapsedMS := time.Since(started).Milliseconds()
 	if elapsedMS < 1 {
 		elapsedMS = 1
 	}
-	evidence, err := NewEvidence(profile, dataset.Selection, artifactSHA256, uint64(elapsedMS), score, final)
+	var evidence Evidence
+	if zeroProviders {
+		evidence, err = newAllReceivedFailuresEvidence(
+			profile, dataset.Selection, artifactSHA256, uint64(elapsedMS), score, final, receivedFailures,
+		)
+	} else {
+		evidence, err = NewEvidence(profile, dataset.Selection, artifactSHA256, uint64(elapsedMS), score, final)
+	}
 	if err != nil {
 		return ExecutionResult{}, err
 	}

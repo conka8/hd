@@ -50,27 +50,300 @@ type confirmationActivationFile struct {
 	SandboxHealthTimeoutMilliseconds int64           `json:"sandbox_health_timeout_ms"`
 }
 
-// confirmationLongMemHarness binds one submitted /run call to the scorer's
-// source-bound broker generation. Seed stays on the raw harness deliberately:
-// no seed response failure is eligible for case-local scoring treatment.
+type confirmationSourceBinding struct {
+	mu         sync.Mutex
+	sourceIP   string
+	capability string
+	revoked    bool
+}
+
+func (binding *confirmationSourceBinding) bind(
+	broker *inferenceBroker,
+	sessionID string,
+	runID string,
+	newSourceIP string,
+	capability string,
+) bool {
+	if binding == nil {
+		return false
+	}
+	binding.mu.Lock()
+	defer binding.mu.Unlock()
+	if binding.sourceIP != "" || binding.capability != "" || binding.revoked ||
+		!broker.bindSourceCapability(sessionID, runID, newSourceIP, capability) {
+		return false
+	}
+	binding.sourceIP = newSourceIP
+	binding.capability = capability
+	binding.revoked = false
+	return true
+}
+
+func (binding *confirmationSourceBinding) revoke(
+	broker *inferenceBroker,
+	sessionID string,
+	runID string,
+) bool {
+	if binding == nil {
+		return false
+	}
+	binding.mu.Lock()
+	defer binding.mu.Unlock()
+	if binding.sourceIP == "" {
+		return false
+	}
+	if binding.revoked && binding.capability == "" {
+		return true
+	}
+	if binding.revoked || binding.capability == "" ||
+		!broker.revokeSourceCapability(sessionID, runID, binding.capability) {
+		return false
+	}
+	binding.capability = ""
+	binding.revoked = true
+	return true
+}
+
+func (binding *confirmationSourceBinding) unbind(
+	broker *inferenceBroker,
+	sessionID string,
+	runID string,
+	sourceIP string,
+) bool {
+	if binding == nil {
+		return false
+	}
+	binding.mu.Lock()
+	defer binding.mu.Unlock()
+	if binding.sourceIP != sourceIP || binding.capability != "" || !binding.revoked ||
+		!broker.unbindSource(sessionID, runID, sourceIP) {
+		return false
+	}
+	binding.sourceIP = ""
+	binding.revoked = false
+	return true
+}
+
+// confirmationLongMemHarness runs every selected LongMem case in a fresh
+// submitted container. All of that case's seed waves and its final /run share
+// one source-bound broker generation; the process is synchronously stopped
+// before that generation is closed. This process boundary prevents a delayed
+// goroutine from case N waking after case N+1 has begun and borrowing its
+// trusted provider activity.
 type confirmationLongMemHarness struct {
-	longmemeval.Harness
-	broker    *inferenceBroker
-	sessionID string
+	mu            sync.Mutex
+	sandbox       sandbox.Sandbox
+	broker        *inferenceBroker
+	image         string
+	sessionID     string
+	runID         string
+	healthTimeout time.Duration
+	binding       *confirmationSourceBinding
+	current       *sandbox.Handle
+	harness       longmemeval.Harness
+	generation    uint64
+	// currentCapability is retained only while a started process has not yet
+	// been source-bound. It lets Close retry a strict stop after a partial
+	// Sandbox.Run/bind failure without reopening broker admission.
+	currentCapability string
+	activeUserID      string
+	closed            bool
+}
+
+func (h *confirmationLongMemHarness) startCaseLocked(ctx context.Context) error {
+	if h.closed || nilInterface(h.sandbox) || h.broker == nil || h.binding == nil {
+		return errors.New("confirmation LongMem harness is closed")
+	}
+	if h.current != nil || h.harness != nil || h.generation != 0 {
+		if h.current == nil || h.harness == nil || h.generation == 0 {
+			return errors.New("confirmation LongMem case lifecycle is inconsistent")
+		}
+		return nil
+	}
+	generation, _, err := h.broker.beginCaseSnapshot(h.sessionID)
+	if err != nil {
+		return errors.New("confirmation LongMem case attribution unavailable")
+	}
+	capability, err := h.broker.installSourceCapability(h.sessionID, h.runID)
+	if err != nil {
+		_, _ = h.broker.endCaseSnapshot(h.sessionID, generation)
+		return errors.New("confirmation LongMem source capability unavailable")
+	}
+	env, err := harnessSandboxEnvWithCapability(
+		nil, confirmationBenchVersion, platformLockedProvider, h.sessionID, capability,
+	)
+	if err != nil {
+		_ = h.broker.revokeSourceCapability(h.sessionID, h.runID, capability)
+		_, _ = h.broker.endCaseSnapshot(h.sessionID, generation)
+		return errors.New("confirmation LongMem source capability unavailable")
+	}
+	handle, err := h.sandbox.Run(ctx, h.image, env)
+	if handle == nil {
+		_ = h.broker.revokeSourceCapability(h.sessionID, h.runID, capability)
+		_, _ = h.broker.endCaseSnapshot(h.sessionID, generation)
+		return errors.New("confirmation LongMem sandbox could not start")
+	}
+	h.current, h.generation, h.currentCapability = handle, generation, capability
+	if err != nil || net.ParseIP(handle.SourceIP) == nil || strings.TrimSpace(handle.BaseURL) == "" {
+		if _, cleanupErr := h.finishUnboundCaseLocked(); cleanupErr != nil {
+			return errors.New("confirmation LongMem sandbox isolation unavailable")
+		}
+		return errors.New("confirmation LongMem sandbox could not start")
+	}
+	if !h.binding.bind(h.broker, h.sessionID, h.runID, handle.SourceIP, capability) {
+		if _, cleanupErr := h.finishUnboundCaseLocked(); cleanupErr != nil {
+			return errors.New("confirmation LongMem sandbox isolation unavailable")
+		}
+		return errors.New("confirmation LongMem source binding failed")
+	}
+	h.currentCapability = ""
+	healthCtx := runner.TrustSandbox(ctx)
+	if err := runner.WaitHealthy(healthCtx, handle.BaseURL, h.healthTimeout); err != nil {
+		_, _ = h.finishCaseLocked()
+		return errors.New("confirmation LongMem harness did not become healthy")
+	}
+	harness, err := longmemeval.NewHTTPHarness(handle.BaseURL, &http.Client{
+		Transport:     http.DefaultTransport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	})
+	if err != nil {
+		_, _ = h.finishCaseLocked()
+		return errors.New("confirmation LongMem harness client unavailable")
+	}
+	h.harness = harness
+	return nil
+}
+
+func (h *confirmationLongMemHarness) stopHandleLocked(handle *sandbox.Handle) error {
+	if handle == nil {
+		return errors.New("confirmation LongMem sandbox identity is unavailable")
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), confirmationRuntimeCleanupTimeout)
+	err := h.sandbox.StopRetainingImage(cleanupCtx, handle)
+	cancel()
+	return err
+}
+
+func (h *confirmationLongMemHarness) finishCaseLocked() (brokerCaseSnapshot, error) {
+	if h.current == nil || h.generation == 0 {
+		return brokerCaseSnapshot{}, errors.New("confirmation LongMem case attribution unavailable")
+	}
+	drainErr := h.broker.beginConfirmationCaseDrain(h.sessionID, h.generation)
+	revokeOK := h.binding.revoke(h.broker, h.sessionID, h.runID)
+	stopErr := h.stopHandleLocked(h.current)
+	if drainErr != nil || !revokeOK || stopErr != nil {
+		h.closed = true
+		if stopErr != nil {
+			return brokerCaseSnapshot{}, errors.New("confirmation LongMem sandbox isolation unavailable")
+		}
+		if !revokeOK {
+			return brokerCaseSnapshot{}, errors.New("confirmation LongMem source capability revocation unavailable")
+		}
+		return brokerCaseSnapshot{}, errors.New("confirmation LongMem case attribution unavailable")
+	}
+	sourceIP := h.current.SourceIP
+	generation := h.generation
+	drainCtx, cancel := context.WithTimeout(context.Background(), confirmationRuntimeCleanupTimeout)
+	snapshot, err := h.broker.waitConfirmationCaseDrained(drainCtx, h.sessionID, generation)
+	cancel()
+	if err != nil {
+		h.closed = true
+		return brokerCaseSnapshot{}, errors.New("confirmation LongMem case attribution unavailable")
+	}
+	if !h.binding.unbind(h.broker, h.sessionID, h.runID, sourceIP) {
+		h.closed = true
+		return brokerCaseSnapshot{}, errors.New("confirmation LongMem source revocation unavailable")
+	}
+	closed, err := h.broker.endCaseSnapshot(h.sessionID, generation)
+	if err != nil {
+		h.closed = true
+		return brokerCaseSnapshot{}, errors.New("confirmation LongMem case attribution unavailable")
+	}
+	h.current, h.harness, h.generation, h.currentCapability, h.activeUserID = nil, nil, 0, "", ""
+	snapshot = closed
+	return snapshot, nil
+}
+
+func (h *confirmationLongMemHarness) finishUnboundCaseLocked() (brokerCaseSnapshot, error) {
+	if h.current == nil || h.generation == 0 || h.binding.sourceIP != "" {
+		return brokerCaseSnapshot{}, errors.New("confirmation LongMem unbound case attribution unavailable")
+	}
+	drainErr := h.broker.beginConfirmationCaseDrain(h.sessionID, h.generation)
+	revokeOK := true
+	if h.currentCapability != "" {
+		if !h.broker.revokeSourceCapability(h.sessionID, h.runID, h.currentCapability) {
+			revokeOK = false
+		} else {
+			h.currentCapability = ""
+		}
+	}
+	stopErr := h.stopHandleLocked(h.current)
+	if drainErr != nil || !revokeOK || stopErr != nil {
+		h.closed = true
+		if stopErr != nil {
+			return brokerCaseSnapshot{}, errors.New("confirmation LongMem sandbox isolation unavailable")
+		}
+		if !revokeOK {
+			return brokerCaseSnapshot{}, errors.New("confirmation LongMem source capability revocation unavailable")
+		}
+		return brokerCaseSnapshot{}, errors.New("confirmation LongMem case attribution unavailable")
+	}
+	generation := h.generation
+	drainCtx, cancel := context.WithTimeout(context.Background(), confirmationRuntimeCleanupTimeout)
+	snapshot, err := h.broker.waitConfirmationCaseDrained(drainCtx, h.sessionID, generation)
+	cancel()
+	if err != nil {
+		h.closed = true
+		return brokerCaseSnapshot{}, errors.New("confirmation LongMem case attribution unavailable")
+	}
+	closed, err := h.broker.endCaseSnapshot(h.sessionID, generation)
+	if err != nil {
+		h.closed = true
+		return brokerCaseSnapshot{}, errors.New("confirmation LongMem case attribution unavailable")
+	}
+	h.current, h.harness, h.generation, h.currentCapability, h.activeUserID = nil, nil, 0, "", ""
+	snapshot = closed
+	return snapshot, nil
+}
+
+func (h *confirmationLongMemHarness) Seed(
+	ctx context.Context,
+	request protocol.SeedRequest,
+) (protocol.SeedResponse, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if strings.TrimSpace(request.UserID) == "" || (h.activeUserID != "" && request.UserID != h.activeUserID) {
+		return protocol.SeedResponse{}, errors.New("confirmation LongMem projected user binding mismatch")
+	}
+	if err := h.startCaseLocked(ctx); err != nil {
+		return protocol.SeedResponse{}, err
+	}
+	if h.activeUserID == "" {
+		h.activeUserID = request.UserID
+	}
+	response, err := h.harness.Seed(ctx, request)
+	if err != nil {
+		_, _ = h.finishCaseLocked()
+	}
+	return response, err
 }
 
 func (h *confirmationLongMemHarness) Run(
 	ctx context.Context,
 	request protocol.RunRequest,
 ) (protocol.RunResponse, error) {
-	generation, _, err := h.broker.beginCaseSnapshot(h.sessionID)
-	if err != nil {
-		return protocol.RunResponse{}, errors.New("confirmation LongMem case attribution unavailable")
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if strings.TrimSpace(request.UserID) == "" || h.activeUserID == "" || request.UserID != h.activeUserID {
+		return protocol.RunResponse{}, errors.New("confirmation LongMem projected user binding mismatch")
 	}
-	response, runErr := h.Harness.Run(ctx, request)
-	snapshot, snapshotErr := h.broker.endCaseSnapshot(h.sessionID, generation)
+	if err := h.startCaseLocked(ctx); err != nil {
+		return protocol.RunResponse{}, err
+	}
+	response, runErr := h.harness.Run(ctx, request)
+	snapshot, snapshotErr := h.finishCaseLocked()
 	if snapshotErr != nil {
-		return protocol.RunResponse{}, errors.New("confirmation LongMem case attribution unavailable")
+		return protocol.RunResponse{}, snapshotErr
 	}
 	if runErr == nil {
 		return response, nil
@@ -87,6 +360,25 @@ func (h *confirmationLongMemHarness) Run(
 		EmbeddingInFlight:      snapshot.EmbeddingInFlight,
 		EmbeddingCancellations: snapshot.EmbeddingCancellations,
 	})
+}
+
+func (h *confirmationLongMemHarness) Close() error {
+	if h == nil {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.closed = true
+	if h.current != nil && h.generation != 0 {
+		if h.binding.sourceIP == "" {
+			_, err := h.finishUnboundCaseLocked()
+			return err
+		} else {
+			_, err := h.finishCaseLocked()
+			return err
+		}
+	}
+	return nil
 }
 
 func readConfirmationActivationFile(path, expectedSHA256 string) (confirmationActivationFile, error) {
@@ -651,46 +943,78 @@ func (factory *screenedConfirmationRuntimeFactory) acquireAfterInstallationValid
 			_ = longMemSource.Close()
 		}
 	}()
-	env := harnessSandboxEnv(nil, confirmationBenchVersion, sessionID)
+	// Give the health-only process a unique compatibility hostname/key without
+	// installing it in the broker. It can boot every supported client adapter,
+	// but no queued request from this process can ever become authorized after a
+	// later case reuses its source IP.
+	preflightCapability, err := newBrokerSourceCapability()
+	if err != nil {
+		return nil, wrapConfirmationExecutionFailure(
+			"sandbox_start", errors.New("confirmation health capability is unavailable"),
+		)
+	}
+	env, err := harnessSandboxEnvWithCapability(
+		nil, confirmationBenchVersion, platformLockedProvider, sessionID, preflightCapability,
+	)
+	if err != nil {
+		return nil, wrapConfirmationExecutionFailure(
+			"sandbox_start", errors.New("confirmation health capability is unavailable"),
+		)
+	}
 	handle, err := factory.sandbox.Run(ctx, image, env)
 	if err != nil || handle == nil || net.ParseIP(handle.SourceIP) == nil || strings.TrimSpace(handle.BaseURL) == "" {
 		if handle != nil {
-			factory.stopHandle(handle)
+			if stopErr := factory.stopHandle(handle); stopErr != nil {
+				cleanupImage = false
+				return nil, wrapConfirmationExecutionFailure(
+					"sandbox_stop", errors.New("confirmation health sandbox isolation failed"),
+				)
+			}
 		}
 		return nil, wrapConfirmationExecutionFailure(
 			"sandbox_start", errors.New("confirmation LongMemEval sandbox could not start"),
 		)
 	}
-	if !factory.broker.bindSource(sessionID, runID, handle.SourceIP) || !factory.broker.beginEmbeddingPhase(sessionID, runID) {
-		factory.stopHandle(handle)
-		return nil, wrapConfirmationExecutionFailure(
-			"source_binding", errors.New("confirmation sandbox source binding failed"),
-		)
-	}
 	healthCtx := runner.TrustSandbox(ctx)
 	if err := runner.WaitHealthy(healthCtx, handle.BaseURL, factory.healthTimeout); err != nil {
-		factory.stopHandle(handle)
+		if stopErr := factory.stopHandle(handle); stopErr != nil {
+			cleanupImage = false
+			return nil, wrapConfirmationExecutionFailure(
+				"sandbox_stop", errors.New("confirmation health sandbox isolation failed"),
+			)
+		}
 		return nil, wrapConfirmationExecutionFailure(
 			"harness_health", errors.New("confirmation LongMemEval harness did not become healthy"),
 		)
 	}
-	harnessClient := &http.Client{
-		Transport:     http.DefaultTransport,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	// This first container proves the screened image's health only. It is never
+	// source-bound, and is strictly removed while retaining the image before the
+	// first selected case receives a generation capability.
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), confirmationRuntimeCleanupTimeout)
+	stopErr := factory.sandbox.StopRetainingImage(cleanupCtx, handle)
+	cleanupCancel()
+	if stopErr != nil {
+		return nil, wrapConfirmationExecutionFailure(
+			"sandbox_stop", errors.New("confirmation health sandbox isolation failed"),
+		)
 	}
-	harness, err := longmemeval.NewHTTPHarness(handle.BaseURL, harnessClient)
-	if err != nil {
-		factory.stopHandle(handle)
-		return nil, wrapConfirmationExecutionFailure("harness_client", err)
+	if !factory.broker.beginEmbeddingPhase(sessionID, runID) {
+		return nil, wrapConfirmationExecutionFailure(
+			"embedding_phase", errors.New("confirmation embedding phase unavailable"),
+		)
+	}
+	binding := &confirmationSourceBinding{}
+	longMemHarness := &confirmationLongMemHarness{
+		sandbox: factory.sandbox, broker: factory.broker, image: image, sessionID: sessionID, runID: runID,
+		healthTimeout: factory.healthTimeout, binding: binding,
 	}
 	caseRunner := &screenedAblationCaseRunner{
 		sandbox: factory.sandbox, broker: factory.broker, image: image, sessionID: sessionID, runID: runID,
-		healthTimeout: factory.healthTimeout, dataset: ablationDataset, current: handle,
-		boundSourceIP: handle.SourceIP,
+		healthTimeout: factory.healthTimeout, dataset: ablationDataset, binding: binding,
 	}
 	closer := &confirmationRuntimeCloser{
 		sandbox: factory.sandbox, broker: factory.broker, image: image, sessionID: sessionID, runID: runID,
-		provider: provider, source: longMemSource, runner: caseRunner,
+		provider: provider, source: longMemSource, longMem: longMemHarness, runner: caseRunner,
 		derivedBuffers: [][]byte{longMemProjectionKey, ablationSelectionKey, ablationProjectionKey},
 	}
 	population := make([]ablation.EligibleCase, len(ablationDataset.Cases))
@@ -701,11 +1025,9 @@ func (factory *screenedConfirmationRuntimeFactory) acquireAfterInstallationValid
 	cleanupSession = false
 	zeroKeys = false
 	return &confirmationRuntime{
-		LongMemSource: longMemSource,
-		LongMemHarness: &confirmationLongMemHarness{
-			Harness: harness, broker: factory.broker, sessionID: sessionID,
-		},
-		LongMemJudge: provider.Judge(), LongMemMeter: provider,
+		LongMemSource:  longMemSource,
+		LongMemHarness: longMemHarness,
+		LongMemJudge:   provider.Judge(), LongMemMeter: provider,
 		LongMemProjectionKey:  longMemProjectionKey,
 		AblationPopulation:    ablation.EligiblePopulation{BenchVersion: confirmationBenchVersion, Confirmation: true, Cases: population},
 		AblationCaseRunner:    caseRunner,
@@ -715,27 +1037,31 @@ func (factory *screenedConfirmationRuntimeFactory) acquireAfterInstallationValid
 	}, nil
 }
 
-func (factory *screenedConfirmationRuntimeFactory) stopHandle(handle *sandbox.Handle) {
+func (factory *screenedConfirmationRuntimeFactory) stopHandle(handle *sandbox.Handle) error {
 	if handle == nil {
-		return
+		return errors.New("confirmation sandbox identity is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), confirmationRuntimeCleanupTimeout)
-	factory.sandbox.Stop(ctx, handle)
+	err := factory.sandbox.StopRetainingImage(ctx, handle)
 	cancel()
+	return err
 }
 
 type screenedAblationCaseRunner struct {
-	mu            sync.Mutex
-	sandbox       sandbox.Sandbox
-	broker        *inferenceBroker
-	image         string
-	sessionID     string
-	runID         string
-	healthTimeout time.Duration
-	dataset       confirmationAblationDataset
-	current       *sandbox.Handle
-	boundSourceIP string
-	closed        bool
+	mu                sync.Mutex
+	sandbox           sandbox.Sandbox
+	broker            *inferenceBroker
+	image             string
+	sessionID         string
+	runID             string
+	healthTimeout     time.Duration
+	dataset           confirmationAblationDataset
+	current           *sandbox.Handle
+	currentLease      *brokerAblationLease
+	currentCapability string
+	currentBound      bool
+	binding           *confirmationSourceBinding
+	closed            bool
 }
 
 func confirmationOpaqueUUID(domain string, values ...string) string {
@@ -773,14 +1099,88 @@ func projectConfirmationAblationSeeds(item confirmationAblationCase, namespace s
 	return result
 }
 
-func (runnerAdapter *screenedAblationCaseRunner) stopCurrentLocked() {
+func (runnerAdapter *screenedAblationCaseRunner) stopCurrentLocked() error {
 	if runnerAdapter.current == nil {
-		return
+		if runnerAdapter.currentLease != nil || runnerAdapter.currentCapability != "" || runnerAdapter.currentBound {
+			return errors.New("confirmation ablation lifecycle is inconsistent")
+		}
+		return nil
+	}
+	if runnerAdapter.currentLease == nil {
+		return errors.New("confirmation ablation scope unavailable")
+	}
+	drainErr := runnerAdapter.currentLease.beginDrain()
+	revokeOK := true
+	if runnerAdapter.currentBound {
+		if !runnerAdapter.binding.revoke(runnerAdapter.broker, runnerAdapter.sessionID, runnerAdapter.runID) {
+			revokeOK = false
+		} else {
+			runnerAdapter.currentCapability = ""
+		}
+	} else if runnerAdapter.currentCapability != "" {
+		if !runnerAdapter.broker.revokeSourceCapability(
+			runnerAdapter.sessionID, runnerAdapter.runID, runnerAdapter.currentCapability,
+		) {
+			revokeOK = false
+		} else {
+			runnerAdapter.currentCapability = ""
+		}
+	}
+	stopErr := runnerAdapter.stopCurrentContainerLocked()
+	if drainErr != nil || !revokeOK || stopErr != nil {
+		runnerAdapter.closed = true
+		if stopErr != nil {
+			return stopErr
+		}
+		if !revokeOK {
+			return errors.New("confirmation ablation source capability revocation failed")
+		}
+		return errors.New("confirmation ablation drain unavailable")
+	}
+	drainCtx, cancel := context.WithTimeout(context.Background(), confirmationRuntimeCleanupTimeout)
+	drainErr = runnerAdapter.currentLease.waitDrained(drainCtx)
+	cancel()
+	if drainErr != nil {
+		runnerAdapter.closed = true
+		return drainErr
+	}
+	if runnerAdapter.currentBound {
+		if err := runnerAdapter.unbindCurrentLocked(); err != nil {
+			runnerAdapter.closed = true
+			return err
+		}
+	}
+	runnerAdapter.currentLease.Close()
+	runnerAdapter.current, runnerAdapter.currentLease = nil, nil
+	runnerAdapter.currentCapability, runnerAdapter.currentBound = "", false
+	return nil
+}
+
+func (runnerAdapter *screenedAblationCaseRunner) stopCurrentContainerLocked() error {
+	if runnerAdapter.current == nil {
+		return nil
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), confirmationRuntimeCleanupTimeout)
-	runnerAdapter.sandbox.Stop(cleanupCtx, runnerAdapter.current)
+	err := runnerAdapter.sandbox.StopRetainingImage(cleanupCtx, runnerAdapter.current)
 	cancel()
+	if err != nil {
+		return errors.New("confirmation ablation sandbox isolation failed")
+	}
+	return nil
+}
+
+func (runnerAdapter *screenedAblationCaseRunner) unbindCurrentLocked() error {
+	if runnerAdapter.current == nil {
+		return nil
+	}
+	if !runnerAdapter.binding.unbind(
+		runnerAdapter.broker, runnerAdapter.sessionID, runnerAdapter.runID, runnerAdapter.current.SourceIP,
+	) {
+		return errors.New("confirmation ablation source revocation failed")
+	}
 	runnerAdapter.current = nil
+	runnerAdapter.currentBound = false
+	return nil
 }
 
 func (runnerAdapter *screenedAblationCaseRunner) RunCase(
@@ -792,7 +1192,7 @@ func (runnerAdapter *screenedAblationCaseRunner) RunCase(
 	}
 	runnerAdapter.mu.Lock()
 	defer runnerAdapter.mu.Unlock()
-	if runnerAdapter.closed || nilInterface(runnerAdapter.sandbox) || runnerAdapter.broker == nil {
+	if runnerAdapter.closed || nilInterface(runnerAdapter.sandbox) || runnerAdapter.broker == nil || runnerAdapter.binding == nil {
 		return ablation.CaseRunResult{}, errors.New("confirmation ablation runner is closed")
 	}
 	item, ok := runnerAdapter.dataset.byID[request.CaseID]
@@ -801,46 +1201,58 @@ func (runnerAdapter *screenedAblationCaseRunner) RunCase(
 	}
 	// The stable LongMem container, or the previous attempt container, is fully
 	// stopped before a new responder capability is leased.
-	runnerAdapter.stopCurrentLocked()
-	handle, err := runnerAdapter.sandbox.Run(ctx, runnerAdapter.image,
-		harnessSandboxEnv(nil, confirmationBenchVersion, runnerAdapter.sessionID))
-	if err != nil || handle == nil || net.ParseIP(handle.SourceIP) == nil || strings.TrimSpace(handle.BaseURL) == "" {
-		if handle != nil {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), confirmationRuntimeCleanupTimeout)
-			runnerAdapter.sandbox.Stop(cleanupCtx, handle)
-			cancel()
+	if err := runnerAdapter.stopCurrentLocked(); err != nil {
+		return ablation.CaseRunResult{}, err
+	}
+	// Install the responder scope before starting an untrusted process. With no
+	// source bound yet it cannot dispatch, and every request still needs the
+	// fresh per-container capability installed below.
+	lease, err := runnerAdapter.broker.beginAblationCase(runnerAdapter.sessionID, runnerAdapter.runID, request)
+	if err != nil {
+		return ablation.CaseRunResult{}, err
+	}
+	capability, err := runnerAdapter.broker.installSourceCapability(runnerAdapter.sessionID, runnerAdapter.runID)
+	if err != nil {
+		lease.Close()
+		return ablation.CaseRunResult{}, errors.New("confirmation ablation source capability unavailable")
+	}
+	env, err := harnessSandboxEnvWithCapability(
+		nil, confirmationBenchVersion, platformLockedProvider,
+		runnerAdapter.sessionID, capability,
+	)
+	if err != nil {
+		_ = runnerAdapter.broker.revokeSourceCapability(runnerAdapter.sessionID, runnerAdapter.runID, capability)
+		lease.Close()
+		return ablation.CaseRunResult{}, errors.New("confirmation ablation source capability unavailable")
+	}
+	handle, err := runnerAdapter.sandbox.Run(ctx, runnerAdapter.image, env)
+	if handle == nil {
+		_ = runnerAdapter.broker.revokeSourceCapability(runnerAdapter.sessionID, runnerAdapter.runID, capability)
+		lease.Close()
+		return ablation.CaseRunResult{}, ablation.MarkRetryable(errors.New("confirmation ablation sandbox could not start"))
+	}
+	runnerAdapter.current, runnerAdapter.currentLease = handle, lease
+	runnerAdapter.currentCapability = capability
+	if err != nil || net.ParseIP(handle.SourceIP) == nil || strings.TrimSpace(handle.BaseURL) == "" {
+		if cleanupErr := runnerAdapter.stopCurrentLocked(); cleanupErr != nil {
+			return ablation.CaseRunResult{}, cleanupErr
 		}
 		return ablation.CaseRunResult{}, ablation.MarkRetryable(errors.New("confirmation ablation sandbox could not start"))
 	}
-	// Lease before admitting the new source. A hostile image can boot, but every
-	// broker request is rejected until the exact scope is already installed.
-	lease, err := runnerAdapter.broker.beginAblationCase(runnerAdapter.sessionID, runnerAdapter.runID, request)
-	if err != nil {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), confirmationRuntimeCleanupTimeout)
-		runnerAdapter.sandbox.Stop(cleanupCtx, handle)
-		cancel()
-		return ablation.CaseRunResult{}, err
-	}
-	finish := func() {
-		// Stop synchronously while the capability is still installed. This
-		// prevents a background request from falling through after revocation.
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), confirmationRuntimeCleanupTimeout)
-		runnerAdapter.sandbox.Stop(cleanupCtx, handle)
-		cancel()
-		lease.Close()
-	}
-	if !runnerAdapter.broker.replaceBoundSource(
-		runnerAdapter.sessionID, runnerAdapter.runID, runnerAdapter.boundSourceIP, handle.SourceIP,
+	if !runnerAdapter.binding.bind(
+		runnerAdapter.broker, runnerAdapter.sessionID, runnerAdapter.runID, handle.SourceIP, capability,
 	) {
-		finish()
+		if cleanupErr := runnerAdapter.stopCurrentLocked(); cleanupErr != nil {
+			return ablation.CaseRunResult{}, cleanupErr
+		}
 		return ablation.CaseRunResult{}, errors.New("confirmation ablation source binding failed")
 	}
-	runnerAdapter.boundSourceIP = handle.SourceIP
-	runnerAdapter.current = handle
+	runnerAdapter.currentBound = true
 	healthCtx := runner.TrustSandbox(ctx)
 	if err := runner.WaitHealthy(healthCtx, handle.BaseURL, runnerAdapter.healthTimeout); err != nil {
-		finish()
-		runnerAdapter.current = nil
+		if cleanupErr := runnerAdapter.stopCurrentLocked(); cleanupErr != nil {
+			return ablation.CaseRunResult{}, cleanupErr
+		}
 		return ablation.CaseRunResult{}, ablation.MarkRetryable(errors.New("confirmation ablation harness did not become healthy"))
 	}
 	harness, err := longmemeval.NewHTTPHarness(handle.BaseURL, &http.Client{
@@ -848,15 +1260,17 @@ func (runnerAdapter *screenedAblationCaseRunner) RunCase(
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	})
 	if err != nil {
-		finish()
-		runnerAdapter.current = nil
+		if cleanupErr := runnerAdapter.stopCurrentLocked(); cleanupErr != nil {
+			return ablation.CaseRunResult{}, cleanupErr
+		}
 		return ablation.CaseRunResult{}, err
 	}
 	seeds := projectConfirmationAblationSeeds(item, request.OpaqueUserNamespace)
 	for _, seed := range seeds {
 		if _, err := harness.Seed(ctx, seed); err != nil {
-			finish()
-			runnerAdapter.current = nil
+			if cleanupErr := runnerAdapter.stopCurrentLocked(); cleanupErr != nil {
+				return ablation.CaseRunResult{}, cleanupErr
+			}
 			return ablation.CaseRunResult{}, ablation.MarkRetryable(errors.New("confirmation ablation seed failed"))
 		}
 	}
@@ -866,8 +1280,9 @@ func (runnerAdapter *screenedAblationCaseRunner) RunCase(
 		CaseID: caseID, SystemPrompt: item.SystemPrompt, UserInput: item.Question,
 		Tools: longmemeval.NativeMemoryTools(), BenchVersion: confirmationBenchVersion, UserID: userID,
 	})
-	finish()
-	runnerAdapter.current = nil
+	if finishErr := runnerAdapter.stopCurrentLocked(); finishErr != nil {
+		return ablation.CaseRunResult{}, finishErr
+	}
 	if err != nil {
 		return ablation.CaseRunResult{}, ablation.MarkRetryable(errors.New("confirmation ablation case failed"))
 	}
@@ -890,30 +1305,47 @@ type confirmationRuntimeCloser struct {
 	runID          string
 	provider       *longmemeval.ProviderSession
 	source         io.Closer
+	longMem        *confirmationLongMemHarness
 	runner         *screenedAblationCaseRunner
 	derivedBuffers [][]byte
 }
 
 func (closer *confirmationRuntimeCloser) Close() error {
 	closer.once.Do(func() {
+		var failures []error
+		longMemIsolated := true
+		if closer.longMem != nil {
+			if err := closer.longMem.Close(); err != nil {
+				longMemIsolated = false
+				failures = append(failures, errors.New("close confirmation LongMem sandbox"))
+			}
+		}
+		ablationIsolated := true
 		if closer.runner != nil {
 			closer.runner.mu.Lock()
 			closer.runner.closed = true
-			closer.runner.stopCurrentLocked()
+			if err := closer.runner.stopCurrentLocked(); err != nil {
+				ablationIsolated = false
+				failures = append(failures, errors.New("close confirmation ablation sandbox"))
+			}
 			closer.runner.mu.Unlock()
 		}
 		closer.broker.endEmbeddingPhase(closer.sessionID, closer.runID)
+		// Session destruction is the final fail-closed revocation/cancellation
+		// boundary and must run even if strict process removal could not be proven.
+		// Only image release is gated on process isolation.
 		closer.broker.removeRun(closer.sessionID, closer.runID)
-		var failures []error
 		if err := closer.provider.Close(); err != nil {
 			failures = append(failures, errors.New("close confirmation provider session"))
 		}
 		if err := closer.source.Close(); err != nil {
 			failures = append(failures, errors.New("close confirmation dataset"))
 		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), confirmationRuntimeCleanupTimeout)
-		closer.sandbox.Release(cleanupCtx, closer.image)
-		cancel()
+		if longMemIsolated && ablationIsolated {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), confirmationRuntimeCleanupTimeout)
+			closer.sandbox.Release(cleanupCtx, closer.image)
+			cancel()
+		}
 		for _, value := range closer.derivedBuffers {
 			zeroConfirmationBytes(value)
 		}

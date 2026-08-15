@@ -1077,23 +1077,22 @@
           },
           "receipt_set_sha256": {
             "maxLength": 64,
-            "minLength": 64,
-            "pattern": "^[0-9a-f]{64}$",
+            "pattern": "^(?:|[0-9a-f]{64})$",
             "type": "string"
           },
           "receipted_requests": {
             "maximum": 9007199254740991,
-            "minimum": 1,
+            "minimum": 0,
             "type": "integer"
           },
           "requests": {
             "maximum": 9007199254740991,
-            "minimum": 1,
+            "minimum": 0,
             "type": "integer"
           },
           "successes": {
             "maximum": 9007199254740991,
-            "minimum": 1,
+            "minimum": 0,
             "type": "integer"
           },
           "total_tokens": {
@@ -2973,23 +2972,22 @@
           },
           "receipt_set_sha256": {
             "maxLength": 64,
-            "minLength": 64,
-            "pattern": "^[0-9a-f]{64}$",
+            "pattern": "^(?:|[0-9a-f]{64})$",
             "type": "string"
           },
           "receipted_requests": {
             "maximum": 9007199254740991,
-            "minimum": 1,
+            "minimum": 0,
             "type": "integer"
           },
           "requests": {
             "maximum": 9007199254740991,
-            "minimum": 1,
+            "minimum": 0,
             "type": "integer"
           },
           "successes": {
             "maximum": 9007199254740991,
-            "minimum": 1,
+            "minimum": 0,
             "type": "integer"
           },
           "total_tokens": {

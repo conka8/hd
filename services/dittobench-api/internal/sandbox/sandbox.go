@@ -29,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,6 +51,7 @@ const (
 	// key ever enters the sandbox.
 	OpenRouterShimCABundlePath = "/run/dittobench/openrouter-shim-ca.pem"
 	openRouterShimHost         = "openrouter.ai"
+	brokerCapabilityHostSuffix = ".host.docker.internal"
 	isolatedDaemonLabel        = "io.heyditto.dittobench.isolated=true"
 )
 
@@ -69,6 +71,10 @@ type Sandbox interface {
 	Release(ctx context.Context, image string)
 	// Stop force-removes the container behind h. Safe to call more than once.
 	Stop(ctx context.Context, h *Handle)
+	// StopRetainingImage force-removes and verifies the container behind h but
+	// retains its built image for another isolated run. It returns an error when
+	// container removal cannot be proven.
+	StopRetainingImage(ctx context.Context, h *Handle) error
 	// Diagnostics captures sanitized container resource evidence before Stop.
 	// It never returns miner output, environment variables, paths, or source.
 	Diagnostics(ctx context.Context, h *Handle) RuntimeDiagnostics
@@ -647,6 +653,10 @@ func (d *LocalDocker) runArgsForNetwork(image string, env map[string]string, net
 		"--add-host", "host.docker.internal:"+hostGateway,
 		"--publish", "127.0.0.1:0:"+d.HarnessPort, // random host port, loopback only
 	)
+	capabilityHost, _ := brokerCapabilityHostFromEnv(env)
+	if capabilityHost != "" {
+		args = append(args, "--add-host", capabilityHost+":"+hostGateway)
+	}
 	shimEnabled := d.OpenRouterShimCABundleHostPath != ""
 	if shimEnabled {
 		args = append(args,
@@ -675,6 +685,9 @@ func (d *LocalDocker) runArgsForNetwork(image string, env map[string]string, net
 		// Force the harness's outbound calls through the allowlisting proxy; the
 		// ticket broker and loopback bypass it via NO_PROXY.
 		noProxy := "host.docker.internal,localhost,127.0.0.1"
+		if capabilityHost != "" {
+			noProxy += "," + capabilityHost
+		}
 		if shimEnabled {
 			noProxy += "," + openRouterShimHost
 		}
@@ -694,6 +707,50 @@ func openRouterShimTLSKey(key string) bool {
 	default:
 		return false
 	}
+}
+
+func brokerCapabilityHostFromEnv(env map[string]string) (string, error) {
+	if len(env) == 0 {
+		return "", nil
+	}
+	hosts := make([]string, 0, 2)
+	for _, key := range []string{"DITTOBENCH_INFERENCE_BASE_URL", "OLLAMA_BASE_URL"} {
+		raw := strings.TrimSpace(env[key])
+		if raw == "" {
+			continue
+		}
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Scheme != "http" || parsed.Hostname() == "" {
+			return "", fmt.Errorf("invalid locked broker URL")
+		}
+		host := strings.ToLower(parsed.Hostname())
+		if strings.HasSuffix(host, brokerCapabilityHostSuffix) {
+			if !validBrokerCapabilityHost(host) {
+				return "", fmt.Errorf("invalid locked broker capability host")
+			}
+			hosts = append(hosts, host)
+		}
+	}
+	if len(hosts) == 0 {
+		return "", nil
+	}
+	if len(hosts) != 2 || hosts[0] != hosts[1] {
+		return "", fmt.Errorf("locked broker capability hosts disagree")
+	}
+	return hosts[0], nil
+}
+
+func validBrokerCapabilityHost(host string) bool {
+	label, ok := strings.CutSuffix(host, brokerCapabilityHostSuffix)
+	if !ok || len(label) != 54 || !strings.HasPrefix(label, "c-") {
+		return false
+	}
+	for _, char := range label[2:] {
+		if (char < 'a' || char > 'z') && (char < '2' || char > '7') {
+			return false
+		}
+	}
+	return true
 }
 
 func (d *LocalDocker) sandboxHostGateway() (string, error) {
@@ -947,6 +1004,9 @@ func parseRuntimeMetrics(diagnostics *RuntimeDiagnostics, output string) {
 func (d *LocalDocker) Run(ctx context.Context, image string, env map[string]string) (*Handle, error) {
 	runCtx, cancel := context.WithTimeout(ctx, d.startTimeout())
 	defer cancel()
+	if _, err := brokerCapabilityHostFromEnv(env); err != nil {
+		return nil, err
+	}
 
 	identity, err := isolatedIdentity()
 	if err != nil {
@@ -1031,15 +1091,48 @@ func (d *LocalDocker) Stop(ctx context.Context, h *Handle) {
 	if h == nil {
 		return
 	}
+	_ = d.StopRetainingImage(ctx, h)
+	d.Release(ctx, h.ImageRef)
+}
+
+func (d *LocalDocker) StopRetainingImage(ctx context.Context, h *Handle) error {
+	if h == nil || strings.TrimSpace(h.ContainerID) == "" {
+		return fmt.Errorf("sandbox container identity is unavailable")
+	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	if h.ContainerID != "" {
-		_ = exec.CommandContext(ctx, "docker", "rm", "-f", h.ContainerID).Run()
+	removeOutput, removeErr := exec.CommandContext(ctx, "docker", "rm", "-f", h.ContainerID).CombinedOutput()
+	inspectOutput, inspectErr := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.Id}}", h.ContainerID).CombinedOutput()
+	if inspectErr == nil {
+		return fmt.Errorf("sandbox container removal was not confirmed")
 	}
-	if h.NetworkName != "" && strings.HasPrefix(h.NetworkName, "ditto-job-") {
-		_, _ = d.dockerOutput(ctx, "network", "rm", h.NetworkName)
+	missing := strings.Contains(string(inspectOutput), "No such object") ||
+		strings.Contains(string(inspectOutput), "No such container")
+	if !missing {
+		return fmt.Errorf("verify sandbox container removal: %w", inspectErr)
 	}
-	d.Release(ctx, h.ImageRef)
+	if removeErr != nil && !strings.Contains(string(removeOutput), "No such container") {
+		return fmt.Errorf("remove sandbox container: %w", removeErr)
+	}
+	if h.NetworkName != "" {
+		if !strings.HasPrefix(h.NetworkName, "ditto-job-") {
+			return fmt.Errorf("sandbox network identity is invalid")
+		}
+		networkRemoveOutput, networkRemoveErr := d.dockerOutput(ctx, "network", "rm", h.NetworkName)
+		networkInspectOutput, networkInspectErr := d.dockerOutput(ctx, "network", "inspect", h.NetworkName)
+		if networkInspectErr == nil {
+			return fmt.Errorf("sandbox network removal was not confirmed")
+		}
+		networkMissing := strings.Contains(string(networkInspectOutput), "No such network") ||
+			strings.Contains(string(networkInspectOutput), "not found")
+		if !networkMissing {
+			return fmt.Errorf("verify sandbox network removal: %w", networkInspectErr)
+		}
+		if networkRemoveErr != nil && !strings.Contains(string(networkRemoveOutput), "No such network") {
+			return fmt.Errorf("remove sandbox network: %w", networkRemoveErr)
+		}
+	}
+	return nil
 }
 
 func (d *LocalDocker) Release(ctx context.Context, image string) {

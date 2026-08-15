@@ -120,6 +120,41 @@ func TestV10HarnessEnvironmentInheritsTheExactV9Allowlist(t *testing.T) {
 	assertExactV9HarnessEnv(t, env)
 }
 
+func TestHarnessSandboxEnvCapabilityLocksEveryCompatibilityRoute(t *testing.T) {
+	capability := strings.Repeat("a", brokerSourceCapabilityChars)
+	env, err := harnessSandboxEnvWithCapability(
+		map[string]string{
+			"OPENAI_API_KEY": "attacker", "OLLAMA_BASE_URL": "http://attacker.invalid",
+		},
+		protocol.BenchVersionV9, platformLockedProvider, "session-route", capability,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, _ := brokerSourceCapabilityHost(capability)
+	base := "http://" + host + ":11436"
+	for _, key := range []string{
+		"DITTOBENCH_INFERENCE_BASE_URL", "CHUTES_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE", "OPENROUTER_BASE_URL",
+	} {
+		if env[key] != base+"/v1/inference" {
+			t.Fatalf("%s=%q", key, env[key])
+		}
+	}
+	for _, key := range []string{"CHUTES_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"} {
+		if env[key] != capability {
+			t.Fatalf("%s=%q", key, env[key])
+		}
+	}
+	if env["OLLAMA_BASE_URL"] != base {
+		t.Fatalf("OLLAMA_BASE_URL=%q", env["OLLAMA_BASE_URL"])
+	}
+	if _, err := harnessSandboxEnvWithCapability(
+		nil, protocol.BenchVersionV9, platformLockedProvider, "session-route", "bad",
+	); err == nil {
+		t.Fatal("non-canonical capability accepted")
+	}
+}
+
 func assertExactV9HarnessEnv(t *testing.T, env map[string]string) {
 	t.Helper()
 	wantKeys := map[string]bool{

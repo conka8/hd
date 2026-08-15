@@ -408,3 +408,92 @@ func TestV9AblationScopeFailsClosedOnWrongIdentityAndOverlap(t *testing.T) {
 		replacement.Close()
 	}
 }
+
+func TestV9AblationDrainRejectsNewAdmissionsAndWaitsForHandlers(t *testing.T) {
+	for _, lane := range []string{"chat", "embedding"} {
+		t.Run(lane, func(t *testing.T) {
+			broker, id, runID, _, upstreamCalls := newV9AblationBroker(t)
+			lease, err := broker.beginAblationCase(id, runID, ablation.RunRequest{
+				Lane: ablation.LaneOrdinary, CaseID: "case-drain-" + lane, OpaqueUserNamespace: "opaque",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lease.Close()
+			reader, writer := io.Pipe()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				request := httptest.NewRequest(http.MethodPost, embeddingAPIPath, reader)
+				request.RemoteAddr = "127.0.0.1:4321"
+				response := httptest.NewRecorder()
+				if lane == "chat" {
+					request.URL.Path = "/v1/inference/chat/completions"
+					request.SetPathValue("rest", "chat/completions")
+					broker.handle(response, request)
+				} else {
+					broker.handleEmbedding(response, request)
+				}
+			}()
+
+			deadline := time.Now().Add(time.Second)
+			for {
+				broker.sessions[id].mu.Lock()
+				active := lease.scope.activeHandlers
+				broker.sessions[id].mu.Unlock()
+				if active == 1 {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("ablation handler was not admitted")
+				}
+				time.Sleep(time.Millisecond)
+			}
+			if err := lease.beginDrain(); err != nil {
+				t.Fatal(err)
+			}
+
+			request := httptest.NewRequest(http.MethodPost, embeddingAPIPath, strings.NewReader(
+				`{"model":"embeddinggemma","input":["new"]}`))
+			request.RemoteAddr = "127.0.0.1:4321"
+			response := httptest.NewRecorder()
+			if lane == "chat" {
+				request = httptest.NewRequest(http.MethodPost, "/v1/inference/chat/completions", strings.NewReader(
+					`{"model":"ignored","messages":[]}`))
+				request.RemoteAddr = "127.0.0.1:4321"
+				request.SetPathValue("rest", "chat/completions")
+				broker.handle(response, request)
+			} else {
+				broker.handleEmbedding(response, request)
+			}
+			if response.Code != http.StatusConflict {
+				t.Fatalf("new admission during drain status=%d body=%s", response.Code, response.Body.String())
+			}
+
+			drainResult := make(chan error, 1)
+			go func() { drainResult <- lease.waitDrained(context.Background()) }()
+			select {
+			case err := <-drainResult:
+				t.Fatalf("drain returned before handler completed: %v", err)
+			case <-time.After(20 * time.Millisecond):
+			}
+			_ = writer.Close()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("blocked ablation handler did not exit")
+			}
+			select {
+			case err := <-drainResult:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("ablation drain did not complete")
+			}
+			if upstreamCalls.Load() != 0 {
+				t.Fatalf("draining ablation reached upstream %d times", upstreamCalls.Load())
+			}
+		})
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base32"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -148,9 +149,22 @@ type brokerSession struct {
 	generation         int
 	expiresAt          time.Time
 	expectedSourceIP   string
-	provider           string
-	model              string
-	requestModel       string
+	sourceEpoch        uint64
+	// sourceActiveHandlers counts every provider-capable broker handler after
+	// source/capability admission and before it returns. Compatibility rotation
+	// advances sourceEpoch, strictly stops the retired process, then waits the
+	// retired epoch to drain before a replacement process may start.
+	sourceActiveHandlers map[uint64]uint64
+	// sourceCapabilityDigest authenticates exactly one fresh submitted
+	// sandbox container. Only its SHA-256 digest is retained; the opaque
+	// token is injected into that container's compatibility URLs/keys and is
+	// rotated before another container can be source-bound.
+	sourceCapabilityDigest   [sha256.Size]byte
+	sourceCapabilityRequired bool
+	sourceCapabilityActive   bool
+	provider                 string
+	model                    string
+	requestModel             string
 	// Budget evidence is copied from the authenticated Platform exchange. It is
 	// optional during a rolling upgrade; when present it lets this independent
 	// broker reject an impossible 4102/4104/4109 attribution instead of trusting
@@ -274,6 +288,8 @@ type brokerAblationScope struct {
 	session             *brokerSession
 	chatCursor          int
 	embeddingCursor     int
+	draining            bool
+	activeHandlers      int
 }
 
 type brokerAblationCall struct {
@@ -359,13 +375,52 @@ type brokerAblationLease struct {
 	scope   *brokerAblationScope
 }
 
+func (lease *brokerAblationLease) beginDrain() error {
+	if lease == nil || lease.session == nil || lease.scope == nil {
+		return fmt.Errorf("ablation scope unavailable")
+	}
+	lease.session.mu.Lock()
+	defer lease.session.mu.Unlock()
+	if lease.session.ablation != lease.scope {
+		return fmt.Errorf("ablation scope unavailable")
+	}
+	lease.scope.draining = true
+	return nil
+}
+
+func (lease *brokerAblationLease) waitDrained(ctx context.Context) error {
+	if ctx == nil || lease == nil || lease.session == nil || lease.scope == nil {
+		return fmt.Errorf("ablation drain unavailable")
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		lease.session.mu.Lock()
+		current := lease.session.ablation == lease.scope
+		draining := lease.scope.draining
+		active := lease.scope.activeHandlers
+		lease.session.mu.Unlock()
+		if !current || !draining {
+			return fmt.Errorf("ablation drain unavailable")
+		}
+		if active == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("ablation broker drain unavailable")
+		case <-ticker.C:
+		}
+	}
+}
+
 func (lease *brokerAblationLease) Close() {
 	if lease == nil {
 		return
 	}
 	lease.once.Do(func() {
 		lease.session.mu.Lock()
-		if lease.session.ablation == lease.scope {
+		if lease.session.ablation == lease.scope && lease.scope.activeHandlers == 0 {
 			lease.session.ablation = nil
 		}
 		lease.session.mu.Unlock()
@@ -395,8 +450,9 @@ func (b *inferenceBroker) beginAblationCase(
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
+	now := time.Now()
 	if session.boundRunID != runID || session.benchVersion != ablation.BenchVersionV9 ||
-		!session.activeLocked(time.Now()) || session.ablation != nil {
+		(!session.activeLocked(now) && !session.confirmationUnboundActiveLocked(now)) || session.ablation != nil {
 		return nil, fmt.Errorf("inference session is not available for ablation")
 	}
 	if session.ablationTraces == nil {
@@ -426,8 +482,8 @@ func (b *inferenceBroker) beginAblationCase(
 	return &brokerAblationLease{session: session, scope: scope}, nil
 }
 
-func newInferenceBrokerHTTPServer(addr string, handler http.Handler) *http.Server {
-	return &http.Server{
+func newInferenceBrokerHTTPServer(addr string, handler http.Handler, brokers ...*inferenceBroker) *http.Server {
+	server := &http.Server{
 		Addr:              addr,
 		Handler:           handler,
 		ReadHeaderTimeout: brokerReadHeaderTimeout,
@@ -436,6 +492,10 @@ func newInferenceBrokerHTTPServer(addr string, handler http.Handler) *http.Serve
 		IdleTimeout:       brokerIdleTimeout,
 		MaxHeaderBytes:    brokerMaximumHeaderBytes,
 	}
+	if len(brokers) == 1 && brokers[0] != nil {
+		server.ConnContext = brokers[0].connectionContext
+	}
+	return server
 }
 
 // listenInferenceBrokerTCP4 binds the miner-facing compatibility plane to the
@@ -1152,7 +1212,9 @@ func (b *inferenceBroker) beginEmbeddingPhase(id, runID string) bool {
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	if session.boundRunID != runID || !session.activeLocked(time.Now()) ||
+	now := time.Now()
+	if session.boundRunID != runID ||
+		(!session.activeLocked(now) && !session.confirmationUnboundActiveLocked(now)) ||
 		session.embeddingPhaseStarted {
 		return false
 	}
@@ -2053,12 +2115,251 @@ func (b *inferenceBroker) bindSource(id, runID, sourceIP string) bool {
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	if session.boundRunID != runID || session.expectedSourceIP != "" ||
+	if session.boundRunID != runID || session.expectedSourceIP != "" || session.sourceCapabilityRequired ||
 		(session.bearer == "" && session.legacyGateway == "" && session.trustedChatHandler == nil) ||
 		!session.expiresAt.After(time.Now()) {
 		return false
 	}
 	session.expectedSourceIP = sourceIP
+	session.sourceEpoch++
+	return true
+}
+
+const (
+	brokerSourceCapabilityBytes = 32
+	brokerSourceCapabilityChars = 52
+	brokerCapabilityHostPrefix  = "c-"
+	brokerCapabilityHostSuffix  = ".host.docker.internal"
+)
+
+func canonicalBrokerSourceCapability(raw string) bool {
+	if len(raw) != brokerSourceCapabilityChars {
+		return false
+	}
+	for index := range raw {
+		character := raw[index]
+		if !((character >= 'a' && character <= 'z') || (character >= '2' && character <= '7')) {
+			return false
+		}
+	}
+	decoded, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(raw))
+	if err != nil || len(decoded) != brokerSourceCapabilityBytes {
+		return false
+	}
+	canonical := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(decoded))
+	return subtle.ConstantTimeCompare([]byte(canonical), []byte(raw)) == 1
+}
+
+func newBrokerSourceCapability() (string, error) {
+	raw := make([]byte, brokerSourceCapabilityBytes)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	token := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw))
+	if !canonicalBrokerSourceCapability(token) {
+		return "", fmt.Errorf("invalid generated broker source capability")
+	}
+	return token, nil
+}
+
+func brokerSourceCapabilityHost(token string) (string, error) {
+	if !canonicalBrokerSourceCapability(token) {
+		return "", fmt.Errorf("invalid broker source capability")
+	}
+	return brokerCapabilityHostPrefix + token + brokerCapabilityHostSuffix, nil
+}
+
+func brokerSourceCapabilityFromHost(hostPort string) (string, bool) {
+	host := strings.ToLower(strings.TrimSpace(hostPort))
+	if parsed, _, err := net.SplitHostPort(host); err == nil {
+		host = parsed
+	}
+	if !strings.HasPrefix(host, brokerCapabilityHostPrefix) || !strings.HasSuffix(host, brokerCapabilityHostSuffix) {
+		return "", false
+	}
+	token := strings.TrimSuffix(strings.TrimPrefix(host, brokerCapabilityHostPrefix), brokerCapabilityHostSuffix)
+	if !canonicalBrokerSourceCapability(token) {
+		return "", true
+	}
+	return token, true
+}
+
+func (b *inferenceBroker) installSourceCapability(id, runID string) (string, error) {
+	token, err := newBrokerSourceCapability()
+	if err != nil || !canonicalBrokerSourceCapability(token) {
+		return "", fmt.Errorf("broker source capability unavailable")
+	}
+	b.mu.RLock()
+	session := b.sessions[id]
+	b.mu.RUnlock()
+	if session == nil {
+		return "", fmt.Errorf("inference session unavailable")
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.boundRunID != runID || session.expectedSourceIP != "" ||
+		session.sourceCapabilityActive || !session.expiresAt.After(time.Now()) {
+		return "", fmt.Errorf("broker source capability unavailable")
+	}
+	session.sourceCapabilityDigest = sha256.Sum256([]byte(token))
+	session.sourceCapabilityRequired = true
+	session.sourceCapabilityActive = true
+	return token, nil
+}
+
+func (b *inferenceBroker) bindSourceCapability(id, runID, sourceIP, token string) bool {
+	if net.ParseIP(sourceIP) == nil || !canonicalBrokerSourceCapability(token) {
+		return false
+	}
+	b.mu.RLock()
+	session := b.sessions[id]
+	b.mu.RUnlock()
+	if session == nil {
+		return false
+	}
+	digest := sha256.Sum256([]byte(token))
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.boundRunID != runID || session.expectedSourceIP != "" ||
+		!session.sourceCapabilityRequired || !session.sourceCapabilityActive ||
+		subtle.ConstantTimeCompare(digest[:], session.sourceCapabilityDigest[:]) != 1 ||
+		(session.bearer == "" && session.legacyGateway == "" && session.trustedChatHandler == nil) ||
+		!session.expiresAt.After(time.Now()) {
+		return false
+	}
+	session.expectedSourceIP = sourceIP
+	session.sourceEpoch++
+	return true
+}
+
+func (b *inferenceBroker) revokeSourceCapability(id, runID, token string) bool {
+	if !canonicalBrokerSourceCapability(token) {
+		return false
+	}
+	b.mu.RLock()
+	session := b.sessions[id]
+	b.mu.RUnlock()
+	if session == nil {
+		return false
+	}
+	digest := sha256.Sum256([]byte(token))
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.boundRunID != runID || !session.sourceCapabilityActive ||
+		subtle.ConstantTimeCompare(digest[:], session.sourceCapabilityDigest[:]) != 1 {
+		return false
+	}
+	for index := range session.sourceCapabilityDigest {
+		session.sourceCapabilityDigest[index] = 0
+	}
+	session.sourceCapabilityActive = false
+	session.sourceEpoch++
+	return true
+}
+
+func (b *inferenceBroker) rotateSourceCapability(id, runID, oldToken string) (string, uint64, error) {
+	if !canonicalBrokerSourceCapability(oldToken) {
+		return "", 0, fmt.Errorf("broker source capability unavailable")
+	}
+	newToken, err := newBrokerSourceCapability()
+	if err != nil {
+		return "", 0, fmt.Errorf("broker source capability unavailable")
+	}
+	b.mu.RLock()
+	session := b.sessions[id]
+	b.mu.RUnlock()
+	if session == nil {
+		return "", 0, fmt.Errorf("inference session unavailable")
+	}
+	oldDigest := sha256.Sum256([]byte(oldToken))
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.boundRunID != runID || !session.sourceCapabilityRequired || !session.sourceCapabilityActive ||
+		subtle.ConstantTimeCompare(oldDigest[:], session.sourceCapabilityDigest[:]) != 1 ||
+		!session.expiresAt.After(time.Now()) {
+		return "", 0, fmt.Errorf("broker source capability unavailable")
+	}
+	retiredEpoch := session.sourceEpoch
+	session.sourceCapabilityDigest = sha256.Sum256([]byte(newToken))
+	session.sourceCapabilityActive = true
+	session.sourceEpoch++
+	return newToken, retiredEpoch, nil
+}
+
+func (b *inferenceBroker) waitSourceEpochDrained(ctx context.Context, id string, epoch uint64) error {
+	if ctx == nil || epoch == 0 {
+		return fmt.Errorf("broker source drain unavailable")
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		b.mu.RLock()
+		session := b.sessions[id]
+		b.mu.RUnlock()
+		if session == nil {
+			return fmt.Errorf("inference session unavailable")
+		}
+		session.mu.Lock()
+		active := session.sourceActiveHandlers[epoch]
+		currentEpoch := session.sourceEpoch
+		session.mu.Unlock()
+		if currentEpoch <= epoch {
+			return fmt.Errorf("broker source drain unavailable")
+		}
+		if active == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("broker source drain unavailable")
+		case <-ticker.C:
+		}
+	}
+}
+
+func (b *inferenceBroker) replaceBoundSourceCapability(id, runID, oldSourceIP, newSourceIP, token string) bool {
+	if net.ParseIP(oldSourceIP) == nil || net.ParseIP(newSourceIP) == nil || !canonicalBrokerSourceCapability(token) {
+		return false
+	}
+	b.mu.RLock()
+	session := b.sessions[id]
+	b.mu.RUnlock()
+	if session == nil {
+		return false
+	}
+	digest := sha256.Sum256([]byte(token))
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.boundRunID != runID || session.expectedSourceIP != oldSourceIP ||
+		!session.sourceCapabilityRequired || !session.sourceCapabilityActive ||
+		subtle.ConstantTimeCompare(digest[:], session.sourceCapabilityDigest[:]) != 1 ||
+		!session.activeLocked(time.Now()) {
+		return false
+	}
+	session.expectedSourceIP = newSourceIP
+	session.sourceEpoch++
+	return true
+}
+
+// unbindSource is the stop-verified half of the confirmation sandbox lease.
+// Incrementing the epoch makes a handler that resolved the old source before
+// revocation fail its locked admission check even when Docker reuses the same
+// IP for the next case.
+func (b *inferenceBroker) unbindSource(id, runID, sourceIP string) bool {
+	b.mu.RLock()
+	session := b.sessions[id]
+	b.mu.RUnlock()
+	if session == nil || net.ParseIP(sourceIP) == nil {
+		return false
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.boundRunID != runID || session.expectedSourceIP != sourceIP ||
+		(session.bearer == "" && session.legacyGateway == "" && session.trustedChatHandler == nil) {
+		return false
+	}
+	session.expectedSourceIP = ""
+	session.sourceEpoch++
 	return true
 }
 
@@ -2081,6 +2382,7 @@ func (b *inferenceBroker) replaceBoundSource(id, runID, oldSourceIP, newSourceIP
 		return false
 	}
 	session.expectedSourceIP = newSourceIP
+	session.sourceEpoch++
 	return true
 }
 
@@ -2117,6 +2419,12 @@ func (session *brokerSession) activeLocked(now time.Time) bool {
 		(session.bearer != "" || session.legacyGateway != "" || session.trustedChatHandler != nil)
 }
 
+func (session *brokerSession) confirmationUnboundActiveLocked(now time.Time) bool {
+	return session.confirmationSession && session.boundRunID != "" && session.expectedSourceIP == "" &&
+		session.expiresAt.After(now) &&
+		(session.bearer != "" || session.legacyGateway != "" || session.trustedChatHandler != nil)
+}
+
 func destroyBrokerSession(session *brokerSession) {
 	if session == nil {
 		return
@@ -2131,6 +2439,7 @@ func destroyBrokerSession(session *brokerSession) {
 		cancel()
 	}
 	clear(session.cancels)
+	clear(session.sourceActiveHandlers)
 	for i := range session.privateKey {
 		session.privateKey[i] = 0
 	}
@@ -2139,6 +2448,10 @@ func destroyBrokerSession(session *brokerSession) {
 	session.legacyGateway = ""
 	session.trustedChatHandler = nil
 	session.requestModel = ""
+	for index := range session.sourceCapabilityDigest {
+		session.sourceCapabilityDigest[index] = 0
+	}
+	session.sourceCapabilityActive = false
 	session.embeddingPhaseActive = false
 	session.signalEmbeddingQueueLocked()
 	session.mu.Unlock()
@@ -2203,11 +2516,12 @@ func (b *inferenceBroker) cancel(w http.ResponseWriter, r *http.Request) {
 
 func (b *inferenceBroker) handle(w http.ResponseWriter, r *http.Request) {
 	b.pruneExpired(time.Now())
-	session := b.sessionForSource(sourceIP(r.RemoteAddr))
-	if session == nil {
+	lease := b.requestSourceLease(r)
+	if lease.session == nil {
 		writeError(w, http.StatusUnauthorized, "inference session unavailable")
 		return
 	}
+	session := lease.session
 	rest := "/" + strings.TrimLeft(r.PathValue("rest"), "/")
 	caseGeneration := uint64(0)
 	if strings.HasPrefix(rest, "/cases/") {
@@ -2237,7 +2551,7 @@ func (b *inferenceBroker) handle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "inference route not found")
 		return
 	}
-	b.handleChat(w, r, session, caseGeneration)
+	b.handleChat(w, r, lease, caseGeneration)
 }
 
 // handleOpenRouterShim is the HTTPS compatibility door for harnesses that
@@ -2256,19 +2570,56 @@ func (b *inferenceBroker) handleOpenRouterShim(w http.ResponseWriter, r *http.Re
 		return
 	}
 	b.pruneExpired(time.Now())
-	session := b.sessionForSource(sourceIP(r.RemoteAddr))
-	if session == nil {
+	lease := b.requestCapabilityLease(r, true)
+	if lease.session == nil {
 		writeError(w, http.StatusUnauthorized, "inference session unavailable")
 		return
 	}
-	b.handleChat(w, r, session)
+	b.handleChat(w, r, lease)
 }
 
-func (b *inferenceBroker) handleChat(w http.ResponseWriter, r *http.Request, session *brokerSession, explicitGeneration ...uint64) {
+func (b *inferenceBroker) handleChat(
+	w http.ResponseWriter, r *http.Request, lease brokerSourceLease, explicitGeneration ...uint64,
+) {
+	session := lease.session
 	session.mu.Lock()
 	caseGeneration := session.activeCaseGeneration
 	if len(explicitGeneration) > 0 && explicitGeneration[0] != 0 {
 		caseGeneration = explicitGeneration[0]
+	}
+	if session.sourceEpoch != lease.epoch || session.expectedSourceIP != lease.sourceIP ||
+		!session.activeLocked(time.Now()) {
+		session.mu.Unlock()
+		writeError(w, http.StatusUnauthorized, "inference session unavailable")
+		return
+	}
+	if session.sourceActiveHandlers == nil {
+		session.sourceActiveHandlers = make(map[uint64]uint64)
+	}
+	sourceEpoch := lease.epoch
+	session.sourceActiveHandlers[sourceEpoch]++
+	defer func() {
+		session.mu.Lock()
+		if active := session.sourceActiveHandlers[sourceEpoch]; active > 1 {
+			session.sourceActiveHandlers[sourceEpoch] = active - 1
+		} else {
+			delete(session.sourceActiveHandlers, sourceEpoch)
+		}
+		session.mu.Unlock()
+	}()
+	if session.confirmationSession && caseGeneration == 0 && session.ablation == nil {
+		session.mu.Unlock()
+		writeError(w, http.StatusConflict, "confirmation case unavailable")
+		return
+	}
+	ablationScope := session.ablation
+	if ablationScope != nil {
+		if ablationScope.draining {
+			session.mu.Unlock()
+			writeError(w, http.StatusConflict, "ablation case unavailable")
+			return
+		}
+		ablationScope.activeHandlers++
 	}
 	confirmationCase := session.confirmationSession && caseGeneration != 0
 	if confirmationCase {
@@ -2276,9 +2627,27 @@ func (b *inferenceBroker) handleChat(w http.ResponseWriter, r *http.Request, ses
 			session.caseSnapshots = make(map[uint64]brokerCaseSnapshot)
 		}
 		snapshot := session.caseSnapshots[caseGeneration]
+		if snapshot.Draining {
+			session.mu.Unlock()
+			writeError(w, http.StatusConflict, "confirmation case unavailable")
+			return
+		}
+		snapshot.ActiveHandlers++
 		snapshot.ReaderAttempts++
 		session.caseSnapshots[caseGeneration] = snapshot
 	}
+	defer func() {
+		session.mu.Lock()
+		if confirmationCase {
+			snapshot := session.caseSnapshots[caseGeneration]
+			snapshot.ActiveHandlers--
+			session.caseSnapshots[caseGeneration] = snapshot
+		}
+		if ablationScope != nil {
+			ablationScope.activeHandlers--
+		}
+		session.mu.Unlock()
+	}()
 	if session.inFlight >= brokerPerSourceConcurrency {
 		session.mu.Unlock()
 		w.Header().Set("Retry-After", "1")
@@ -2336,24 +2705,81 @@ func (b *inferenceBroker) handleEmbedding(w http.ResponseWriter, r *http.Request
 		return
 	}
 	b.pruneExpired(time.Now())
-	session := b.sessionForSource(sourceIP(r.RemoteAddr))
-	if session == nil {
+	lease := b.requestSourceLease(r)
+	if lease.session == nil {
 		writeError(w, http.StatusUnauthorized, "embedding session unavailable")
 		return
 	}
+	b.handleEmbeddingWithLease(w, r, lease)
+}
+
+func (b *inferenceBroker) handleEmbeddingWithLease(w http.ResponseWriter, r *http.Request, lease brokerSourceLease) {
+	session := lease.session
 	session.mu.Lock()
 	benchVersion := session.benchVersion
 	caseGeneration := session.activeCaseGeneration
+	if session.sourceEpoch != lease.epoch || session.expectedSourceIP != lease.sourceIP ||
+		!session.activeLocked(time.Now()) {
+		session.mu.Unlock()
+		writeError(w, http.StatusUnauthorized, "embedding session unavailable")
+		return
+	}
+	if session.sourceActiveHandlers == nil {
+		session.sourceActiveHandlers = make(map[uint64]uint64)
+	}
+	sourceEpoch := lease.epoch
+	session.sourceActiveHandlers[sourceEpoch]++
+	defer func() {
+		session.mu.Lock()
+		if active := session.sourceActiveHandlers[sourceEpoch]; active > 1 {
+			session.sourceActiveHandlers[sourceEpoch] = active - 1
+		} else {
+			delete(session.sourceActiveHandlers, sourceEpoch)
+		}
+		session.mu.Unlock()
+	}()
+	if session.confirmationSession && caseGeneration == 0 && session.ablation == nil {
+		session.mu.Unlock()
+		writeError(w, http.StatusConflict, "confirmation case unavailable")
+		return
+	}
+	ablationScope := session.ablation
+	if ablationScope != nil {
+		if ablationScope.draining {
+			session.mu.Unlock()
+			writeError(w, http.StatusConflict, "ablation case unavailable")
+			return
+		}
+		ablationScope.activeHandlers++
+	}
 	confirmationCase := session.confirmationSession && caseGeneration != 0
 	if confirmationCase {
 		if session.caseSnapshots == nil {
 			session.caseSnapshots = make(map[uint64]brokerCaseSnapshot)
 		}
 		snapshot := session.caseSnapshots[caseGeneration]
+		if snapshot.Draining {
+			session.mu.Unlock()
+			writeError(w, http.StatusConflict, "confirmation case unavailable")
+			return
+		}
+		snapshot.ActiveHandlers++
 		snapshot.EmbeddingAttempts++
 		session.caseSnapshots[caseGeneration] = snapshot
 	}
 	session.mu.Unlock()
+	defer func() {
+		session.mu.Lock()
+		if confirmationCase {
+			snapshot := session.caseSnapshots[caseGeneration]
+			snapshot.ActiveHandlers--
+			session.caseSnapshots[caseGeneration] = snapshot
+		}
+		if ablationScope != nil {
+			ablationScope.activeHandlers--
+		}
+		session.mu.Unlock()
+	}()
 	if !usesPlatformEmbedding(benchVersion) && b.embeddingURL == "" {
 		writeError(w, http.StatusServiceUnavailable, "embedding service unavailable")
 		return
@@ -2486,7 +2912,6 @@ func (b *inferenceBroker) handleEmbedding(w http.ResponseWriter, r *http.Request
 	session.embeddingInputs += uint64(len(payload.Input))
 	session.embeddingInputBytes += uint64(inputBytes)
 	runID := session.boundRunID
-	ablationScope := session.ablation
 	ordinaryAblationCall := -1
 	if ablationScope != nil && ablationScope.lane == ablation.LaneOrdinary {
 		ordinaryAblationCall = ablationScope.reserveOrdinaryCall(false, body)
@@ -2960,21 +3385,127 @@ func (b *inferenceBroker) forwardPlatformEmbedding(
 	return decoded, nil
 }
 
-func (b *inferenceBroker) sessionForSource(ip string) *brokerSession {
+type brokerSourceLease struct {
+	session  *brokerSession
+	sourceIP string
+	epoch    uint64
+}
+
+type brokerConnectionLeaseContextKey struct{}
+
+// connectionContext snapshots the source lease when the TCP connection is
+// accepted. A request queued on an old keep-alive connection must never look
+// up a newly rebound session merely because Docker reused the same source IP
+// before its HTTP handler was scheduled.
+func (b *inferenceBroker) connectionContext(ctx context.Context, connection net.Conn) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	lease := brokerSourceLease{}
+	if connection != nil && connection.RemoteAddr() != nil {
+		lease = b.sessionLeaseForSource(sourceIP(connection.RemoteAddr().String()))
+	}
+	return context.WithValue(ctx, brokerConnectionLeaseContextKey{}, lease)
+}
+
+func (b *inferenceBroker) requestSourceLease(request *http.Request) brokerSourceLease {
+	return b.requestCapabilityLease(request, false)
+}
+
+func (b *inferenceBroker) sessionLeaseForSource(ip string) brokerSourceLease {
 	if net.ParseIP(ip) == nil {
-		return nil
+		return brokerSourceLease{}
 	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for _, session := range b.sessions {
 		session.mu.Lock()
-		matches := session.expectedSourceIP == ip && session.activeLocked(time.Now())
+		matches := !session.sourceCapabilityRequired && session.expectedSourceIP == ip && session.activeLocked(time.Now())
+		epoch := session.sourceEpoch
 		session.mu.Unlock()
 		if matches {
-			return session
+			return brokerSourceLease{session: session, sourceIP: ip, epoch: epoch}
 		}
 	}
-	return nil
+	return brokerSourceLease{}
+}
+
+func (b *inferenceBroker) sessionLeaseForCapability(ip, token string) brokerSourceLease {
+	if net.ParseIP(ip) == nil || !canonicalBrokerSourceCapability(token) {
+		return brokerSourceLease{}
+	}
+	digest := sha256.Sum256([]byte(token))
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	for _, session := range b.sessions {
+		session.mu.Lock()
+		matches := session.sourceCapabilityActive &&
+			subtle.ConstantTimeCompare(digest[:], session.sourceCapabilityDigest[:]) == 1 &&
+			session.expectedSourceIP == ip && session.activeLocked(time.Now())
+		epoch := session.sourceEpoch
+		session.mu.Unlock()
+		if matches {
+			return brokerSourceLease{session: session, sourceIP: ip, epoch: epoch}
+		}
+	}
+	return brokerSourceLease{}
+}
+
+func bearerCapability(request *http.Request) string {
+	provided, ok := strings.CutPrefix(request.Header.Get("Authorization"), "Bearer ")
+	if !ok || !canonicalBrokerSourceCapability(provided) {
+		return ""
+	}
+	return provided
+}
+
+func sameBrokerSourceCapability(left, right string) bool {
+	if !canonicalBrokerSourceCapability(left) || !canonicalBrokerSourceCapability(right) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(left), []byte(right)) == 1
+}
+
+func (b *inferenceBroker) requestCapabilityLease(request *http.Request, requireBearer bool) brokerSourceLease {
+	if request == nil {
+		return brokerSourceLease{}
+	}
+	ip := sourceIP(request.RemoteAddr)
+	hostCapability, capabilityHost := brokerSourceCapabilityFromHost(request.Host)
+	bearer := bearerCapability(request)
+	if requireBearer {
+		if bearer != "" {
+			return b.sessionLeaseForCapability(ip, bearer)
+		}
+		// Explicit loopback/test sessions retain their historical source-only
+		// compatibility. Production sandboxes install sourceCapabilityRequired,
+		// so this fallback stays closed even between revoke and unbind.
+		return b.requestLegacySourceLease(request)
+	}
+	if capabilityHost {
+		if hostCapability == "" || (bearer != "" && !sameBrokerSourceCapability(hostCapability, bearer)) {
+			return brokerSourceLease{}
+		}
+		return b.sessionLeaseForCapability(ip, hostCapability)
+	}
+	if bearer != "" {
+		return b.sessionLeaseForCapability(ip, bearer)
+	}
+	return b.requestLegacySourceLease(request)
+}
+
+func (b *inferenceBroker) requestLegacySourceLease(request *http.Request) brokerSourceLease {
+	if request == nil {
+		return brokerSourceLease{}
+	}
+	if lease, ok := request.Context().Value(brokerConnectionLeaseContextKey{}).(brokerSourceLease); ok {
+		return lease
+	}
+	return b.sessionLeaseForSource(sourceIP(request.RemoteAddr))
+}
+
+func (b *inferenceBroker) sessionForSource(ip string) *brokerSession {
+	return b.sessionLeaseForSource(ip).session
 }
 
 func (b *inferenceBroker) health(w http.ResponseWriter, session *brokerSession) {
@@ -3551,6 +4082,8 @@ type brokerCaseSnapshot struct {
 	EmbeddingDelivered     uint64
 	EmbeddingInFlight      int
 	EmbeddingCancellations uint64
+	ActiveHandlers         int
+	Draining               bool
 	// DelayedRequests and InjectedDelayMS record the delay-fingerprint
 	// schedule realized inside this case window (delay_fingerprint.go): how
 	// many successful completions were held, and for how long in total. Booked
@@ -3686,6 +4219,58 @@ func (b *inferenceBroker) endCaseSnapshot(id string, generation uint64) (brokerC
 	session.activeCaseGeneration = 0
 	session.activeCaseID = ""
 	return session.caseSnapshots[generation], nil
+}
+
+func (b *inferenceBroker) beginConfirmationCaseDrain(id string, generation uint64) error {
+	b.mu.RLock()
+	session := b.sessions[id]
+	b.mu.RUnlock()
+	if session == nil {
+		return fmt.Errorf("inference session unavailable")
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if !session.confirmationSession || generation == 0 || session.activeCaseGeneration != generation {
+		return fmt.Errorf("confirmation case generation unavailable")
+	}
+	snapshot := session.caseSnapshots[generation]
+	if snapshot.Draining {
+		return nil
+	}
+	snapshot.Draining = true
+	session.caseSnapshots[generation] = snapshot
+	return nil
+}
+
+// waitConfirmationCaseDrained waits after the submitted process has been
+// strictly removed until every broker handler admitted under this generation's
+// source epoch has returned. The caller then CAS-unbinds that dead source
+// before closing the generation.
+func (b *inferenceBroker) waitConfirmationCaseDrained(
+	ctx context.Context,
+	id string,
+	generation uint64,
+) (brokerCaseSnapshot, error) {
+	if ctx == nil {
+		return brokerCaseSnapshot{}, fmt.Errorf("confirmation case drain context unavailable")
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		snapshot, err := b.generationCaseSnapshot(id, generation)
+		if err != nil {
+			return brokerCaseSnapshot{}, err
+		}
+		if snapshot.ActiveHandlers == 0 && snapshot.InFlight == 0 &&
+			snapshot.ReaderInFlight == 0 && snapshot.EmbeddingInFlight == 0 {
+			return snapshot, nil
+		}
+		select {
+		case <-ctx.Done():
+			return brokerCaseSnapshot{}, fmt.Errorf("confirmation case broker drain unavailable")
+		case <-ticker.C:
+		}
+	}
 }
 
 func toolProvenanceEvidence(snapshot brokerCaseSnapshot) *protocol.ToolProvenanceEvidence {

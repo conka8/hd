@@ -173,6 +173,7 @@ func startOpenRouterShim(broker *inferenceBroker, caBundlePath string, port int)
 	server := newInferenceBrokerHTTPServer(
 		"",
 		http.HandlerFunc(broker.handleOpenRouterShim),
+		broker,
 	)
 	go func() {
 		if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {

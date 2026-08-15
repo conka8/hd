@@ -14,12 +14,14 @@ import (
 )
 
 type diagnosticSandbox struct {
-	diagnostics    sandbox.RuntimeDiagnostics
-	logs           string
-	logsAfter      bool // true once Stop ran, proving Logs was NOT read before teardown
-	stopped        bool
-	stoppedHandle  *sandbox.Handle
-	v8IsolationErr error
+	diagnostics      sandbox.RuntimeDiagnostics
+	logs             string
+	logsAfter        bool // true once Stop ran, proving Logs was NOT read before teardown
+	stopped          bool
+	stoppedHandle    *sandbox.Handle
+	stopRetainingErr error
+	released         int
+	v8IsolationErr   error
 }
 
 func (*diagnosticSandbox) Available(context.Context) error { return nil }
@@ -32,10 +34,15 @@ func (*diagnosticSandbox) Build(context.Context, sandbox.Source) (string, string
 func (*diagnosticSandbox) Run(context.Context, string, map[string]string) (*sandbox.Handle, error) {
 	return nil, nil
 }
-func (*diagnosticSandbox) Release(context.Context, string) {}
+func (s *diagnosticSandbox) Release(context.Context, string) { s.released++ }
 func (s *diagnosticSandbox) Stop(_ context.Context, handle *sandbox.Handle) {
 	s.stopped = true
 	s.stoppedHandle = handle
+}
+
+func (s *diagnosticSandbox) StopRetainingImage(ctx context.Context, handle *sandbox.Handle) error {
+	s.Stop(ctx, handle)
+	return s.stopRetainingErr
 }
 func (s *diagnosticSandbox) Diagnostics(context.Context, *sandbox.Handle) sandbox.RuntimeDiagnostics {
 	return s.diagnostics
@@ -108,7 +115,9 @@ func TestStopSandboxForRestartRetainsRequestImage(t *testing.T) {
 		SourceIP:    "172.30.0.2",
 	}
 
-	s.stopSandboxForRestart(handle)
+	if err := s.stopSandboxForRestart(handle); err != nil {
+		t.Fatal(err)
+	}
 
 	if backend.stoppedHandle == nil {
 		t.Fatal("compatibility container was not stopped")
@@ -122,6 +131,45 @@ func TestStopSandboxForRestartRetainsRequestImage(t *testing.T) {
 	}
 	if handle.ImageRef != "dittobench-sub:screened-image-123" {
 		t.Fatalf("restart stop mutated original handle: %+v", handle)
+	}
+}
+
+func TestStopSandboxForRestartFailsClosedWhenStrictRemovalIsUnverified(t *testing.T) {
+	backend := &diagnosticSandbox{stopRetainingErr: errors.New("container still present")}
+	s := &server{sandbox: backend}
+	handle := &sandbox.Handle{
+		ContainerID: "container-123", ImageRef: "dittobench-sub:screened-image-123", NetworkName: "ditto-job-123",
+	}
+	if err := s.stopSandboxForRestart(handle); err == nil {
+		t.Fatal("unverified compatibility stop was accepted")
+	}
+	if !backend.stopped || backend.stoppedHandle == nil {
+		t.Fatal("strict compatibility stop was not attempted")
+	}
+}
+
+func TestCleanupPartialSandboxStartReleasesOnlyAfterVerifiedStop(t *testing.T) {
+	handle := &sandbox.Handle{ContainerID: "partial", ImageRef: "screened", NetworkName: "ditto-job-partial"}
+	for _, test := range []struct {
+		name        string
+		stopErr     error
+		wantErr     bool
+		wantRelease int
+	}{
+		{name: "verified", wantRelease: 1},
+		{name: "unverified", stopErr: errors.New("still running"), wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			backend := &diagnosticSandbox{stopRetainingErr: test.stopErr}
+			s := &server{sandbox: backend}
+			err := s.cleanupPartialSandboxStart(handle, "screened")
+			if (err != nil) != test.wantErr {
+				t.Fatalf("cleanup error=%v wantErr=%v", err, test.wantErr)
+			}
+			if backend.released != test.wantRelease {
+				t.Fatalf("image releases=%d want=%d", backend.released, test.wantRelease)
+			}
+		})
 	}
 }
 
