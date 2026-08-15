@@ -113,6 +113,10 @@ _MIN_HOSTED_EMBEDDING_BENCH_VERSION = 7
 _PROVIDER_MAX_ATTEMPTS = 3
 _PROVIDER_RETRY_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 _PROVIDER_RETRY_AFTER_MAX_SECONDS = 5
+_CONFIRMATION_READER_BACKPRESSURE_MAX_ATTEMPTS = 7
+_CONFIRMATION_READER_BACKPRESSURE_MAX_ELAPSED_SECONDS = 80.0
+_CONFIRMATION_READER_RETRY_AFTER_MAX_SECONDS = 60
+_CONFIRMATION_READER_RETRY_AFTER_DEFAULT_SECONDS = 10
 
 # Bytes per token, for turning a request body into a token estimate.
 #
@@ -241,6 +245,169 @@ def _provider_is_backpressure(response: httpx.Response) -> bool:
     )
 
 
+def _decode_provider_object_strict(response: httpx.Response) -> dict[str, Any] | None:
+    """Decode one provider object while rejecting duplicate keys at any depth."""
+
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        decoded: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in decoded:
+                raise ValueError("duplicate JSON object key")
+            decoded[key] = value
+        return decoded
+
+    def reject_nonfinite_constant(value: str) -> None:
+        raise ValueError(f"non-finite JSON constant: {value}")
+
+    def reject_negative_zero_integer(value: str) -> int:
+        if value.startswith("-") and int(value) == 0:
+            raise ValueError("negative zero integer")
+        return int(value)
+
+    try:
+        payload = json.loads(
+            response.content,
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=reject_nonfinite_constant,
+            parse_int=reject_negative_zero_integer,
+        )
+    except ValueError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _provider_backpressure_is_receipt_free(
+    response: httpx.Response,
+    *,
+    expected_model: str,
+    expected_provider: str,
+) -> bool:
+    """Prove a 429/503 has no completion, usage, cost, or provider receipt."""
+    if response.status_code not in {429, 503}:
+        return False
+    payload = _decode_provider_object_strict(response)
+    if payload is None:
+        return False
+    if set(payload) not in ({"error"}, {"error", "openrouter_metadata"}):
+        return False
+    error = payload.get("error")
+    if not isinstance(error, dict) or set(error) != {"code", "message"}:
+        return False
+    code = error.get("code")
+    message = error.get("message")
+    if (
+        type(code) is not int
+        or code != response.status_code
+        or not isinstance(message, str)
+        or not message.strip()
+    ):
+        return False
+    forbidden = {
+        "id",
+        "generation",
+        "generation_id",
+        "provider",
+        "choices",
+        "usage",
+        "cost",
+        "receipt",
+        "receipt_id",
+        "attempt",
+        "attempts",
+        "selected",
+        "billed",
+        "charged",
+    }
+
+    if "openrouter_metadata" in payload:
+        metadata = payload["openrouter_metadata"]
+        if not _provider_backpressure_metadata_is_pre_provider(
+            metadata,
+            expected_model=expected_model,
+            expected_provider=expected_provider,
+        ):
+            return False
+        payload = {
+            key: value for key, value in payload.items() if key != "openrouter_metadata"
+        }
+
+    def contains_receipt_field(value: Any) -> bool:
+        if isinstance(value, dict):
+            return any(
+                key in forbidden or contains_receipt_field(child)
+                for key, child in value.items()
+            )
+        if isinstance(value, list):
+            return any(contains_receipt_field(child) for child in value)
+        return False
+
+    return not contains_receipt_field(payload)
+
+
+def _provider_backpressure_metadata_is_pre_provider(
+    value: Any,
+    *,
+    expected_model: str,
+    expected_provider: str,
+) -> bool:
+    if not isinstance(value, dict) or set(value) != {
+        "requested",
+        "strategy",
+        "attempt",
+        "endpoints",
+    }:
+        return False
+    if (
+        not isinstance(value["requested"], str)
+        or value["requested"] != expected_model
+        or value["strategy"] != "direct"
+        or type(value["attempt"]) is not int
+        or value["attempt"] != 0
+    ):
+        return False
+    endpoints = value["endpoints"]
+    if not isinstance(endpoints, dict) or set(endpoints) != {"total", "available"}:
+        return False
+    available = endpoints["available"]
+    if (
+        type(endpoints["total"]) is not int
+        or not isinstance(available, list)
+        or not available
+        or endpoints["total"] != len(available)
+    ):
+        return False
+    for endpoint in available:
+        if not isinstance(endpoint, dict) or set(endpoint) != {
+            "provider",
+            "model",
+            "selected",
+        }:
+            return False
+        if (
+            not isinstance(endpoint["provider"], str)
+            or endpoint["provider"].casefold() != expected_provider.casefold()
+            or not isinstance(endpoint["model"], str)
+            or endpoint["model"] != expected_model
+            or type(endpoint["selected"]) is not bool
+            or endpoint["selected"]
+        ):
+            return False
+    return True
+
+
+def _confirmation_reader_backpressure_delay(response: httpx.Response) -> float:
+    raw = response.headers.get("Retry-After", "").strip()
+    try:
+        if not raw or not raw.isascii() or not raw.isdigit():
+            raise ValueError("Retry-After is not ASCII delay-seconds")
+        seconds = int(raw)
+    except ValueError:
+        seconds = _CONFIRMATION_READER_RETRY_AFTER_DEFAULT_SECONDS
+    if seconds <= 0:
+        seconds = _CONFIRMATION_READER_RETRY_AFTER_DEFAULT_SECONDS
+    return float(min(seconds, _CONFIRMATION_READER_RETRY_AFTER_MAX_SECONDS))
+
+
 @dataclass(frozen=True)
 class _ChatCompletionResult:
     raw: bytes
@@ -283,6 +450,11 @@ async def _post_provider_with_retry(
     headers: dict[str, str],
     retry_backpressure: bool = True,
     retry_pre_provider_not_found_model: str | None = None,
+    backpressure_max_attempts: int = _PROVIDER_MAX_ATTEMPTS,
+    require_receipt_free_backpressure: bool = False,
+    receipt_free_expected_model: str = "",
+    receipt_free_expected_provider: str = "",
+    max_elapsed_seconds: float | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> _ProviderResult:
     """Run one logical provider request under the shared bounded retry policy.
@@ -292,41 +464,82 @@ async def _post_provider_with_retry(
     completed and billed the request, so the caller fails closed and lets the
     validator retry the whole benchmark later instead of duplicating execution.
     """
-    for attempt in range(1, _PROVIDER_MAX_ATTEMPTS + 1):
-        try:
-            response = await client.post(url, json=payload, headers=headers)
-        except (httpx.ConnectError, httpx.ConnectTimeout) as error:
-            if attempt == _PROVIDER_MAX_ATTEMPTS:
-                raise _ProviderCallError(
-                    attempts=attempt,
-                    timed_out=isinstance(error, httpx.TimeoutException),
-                ) from error
-            await sleep(0.25 * (2 ** (attempt - 1)))
-            continue
-        except httpx.TimeoutException as error:
-            raise _ProviderCallError(attempts=attempt, timed_out=True) from error
-        except httpx.TransportError as error:
-            raise _ProviderCallError(attempts=attempt, timed_out=False) from error
-        retryable_status = response.status_code in _PROVIDER_RETRY_STATUSES or (
-            _is_retryable_pre_provider_not_found(
-                response,
-                expected_model=retry_pre_provider_not_found_model,
+    max_attempts = max(_PROVIDER_MAX_ATTEMPTS, backpressure_max_attempts)
+    attempt = 0
+    deadline = (
+        time.monotonic() + max_elapsed_seconds
+        if max_elapsed_seconds is not None
+        else None
+    )
+
+    async def execute() -> _ProviderResult:
+        nonlocal attempt
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = await client.post(url, json=payload, headers=headers)
+            except (httpx.ConnectError, httpx.ConnectTimeout) as error:
+                if attempt >= _PROVIDER_MAX_ATTEMPTS:
+                    raise _ProviderCallError(
+                        attempts=attempt,
+                        timed_out=isinstance(error, httpx.TimeoutException),
+                    ) from error
+                await sleep(0.25 * (2 ** (attempt - 1)))
+                continue
+            except httpx.TimeoutException as error:
+                raise _ProviderCallError(attempts=attempt, timed_out=True) from error
+            except httpx.TransportError as error:
+                raise _ProviderCallError(attempts=attempt, timed_out=False) from error
+            retryable_status = response.status_code in _PROVIDER_RETRY_STATUSES or (
+                _is_retryable_pre_provider_not_found(
+                    response,
+                    expected_model=retry_pre_provider_not_found_model,
+                )
             )
-        )
-        if (
-            retryable_status
-            and attempt < _PROVIDER_MAX_ATTEMPTS
-            and (retry_backpressure or not _provider_is_backpressure(response))
-        ):
-            if _provider_is_backpressure(response):
-                delay = _provider_retry_after_seconds(response)
-            else:
-                delay = 0.25 * (2 ** (attempt - 1))
-            await response.aclose()
-            await sleep(delay)
-            continue
-        return _ProviderResult(response=response, attempts=attempt)
-    raise AssertionError("provider retry loop exhausted without a terminal result")
+            attempt_limit = _PROVIDER_MAX_ATTEMPTS
+            delay = 0.25 * (2 ** (attempt - 1))
+            confirmation_backpressure = response.status_code in {429, 503}
+            if confirmation_backpressure and require_receipt_free_backpressure:
+                if not _provider_backpressure_is_receipt_free(
+                    response,
+                    expected_model=receipt_free_expected_model,
+                    expected_provider=receipt_free_expected_provider,
+                ):
+                    return _ProviderResult(response=response, attempts=attempt)
+                if (
+                    response.status_code == 429
+                    and backpressure_max_attempts > _PROVIDER_MAX_ATTEMPTS
+                ):
+                    attempt_limit = backpressure_max_attempts
+                    delay = _confirmation_reader_backpressure_delay(response)
+                else:
+                    delay = float(_provider_retry_after_seconds(response))
+            if (
+                retryable_status
+                and attempt < attempt_limit
+                and (retry_backpressure or not _provider_is_backpressure(response))
+            ):
+                if not require_receipt_free_backpressure and _provider_is_backpressure(
+                    response
+                ):
+                    delay = _provider_retry_after_seconds(response)
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise _ProviderCallError(attempts=attempt, timed_out=True)
+                    delay = min(delay, remaining)
+                await response.aclose()
+                await sleep(delay)
+                continue
+            return _ProviderResult(response=response, attempts=attempt)
+        raise AssertionError("provider retry loop exhausted without a terminal result")
+
+    if max_elapsed_seconds is None:
+        return await execute()
+    try:
+        async with asyncio.timeout(max_elapsed_seconds):
+            return await execute()
+    except TimeoutError as error:
+        raise _ProviderCallError(attempts=max(1, attempt), timed_out=True) from error
 
 
 def _is_retryable_pre_provider_not_found(
@@ -336,22 +549,8 @@ def _is_retryable_pre_provider_not_found(
     if response.status_code != 404 or not expected_model:
         return False
 
-    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        decoded: dict[str, Any] = {}
-        for key, value in pairs:
-            if key in decoded:
-                raise ValueError("duplicate JSON object key")
-            decoded[key] = value
-        return decoded
-
-    try:
-        payload = json.loads(
-            response.content,
-            object_pairs_hook=reject_duplicate_keys,
-        )
-    except ValueError:
-        return False
-    if not isinstance(payload, dict):
+    payload = _decode_provider_object_strict(response)
+    if payload is None:
         return False
     error = payload.get("error")
     error_code = error.get("code") if isinstance(error, dict) else None
@@ -2384,6 +2583,19 @@ async def proxy_confirmation_chat_completions(
             # shared loop is bounded and still fails closed on ambiguous reads.
             retry_backpressure=True,
             retry_pre_provider_not_found_model=expected_model,
+            backpressure_max_attempts=(
+                _CONFIRMATION_READER_BACKPRESSURE_MAX_ATTEMPTS
+                if grant.lane == "reader"
+                else _PROVIDER_MAX_ATTEMPTS
+            ),
+            require_receipt_free_backpressure=grant.lane == "reader",
+            receipt_free_expected_model=expected_model,
+            receipt_free_expected_provider=grant.route_provider,
+            max_elapsed_seconds=(
+                _CONFIRMATION_READER_BACKPRESSURE_MAX_ELAPSED_SECONDS
+                if grant.lane == "reader"
+                else None
+            ),
         )
         if result.response.status_code >= 400:
             logger.warning(

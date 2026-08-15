@@ -1,10 +1,211 @@
 package inference
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestConfirmationReaderBackpressureDelay(t *testing.T) {
+	tests := map[string]struct {
+		retryAfter string
+		want       time.Duration
+	}{
+		"missing defaults to ten seconds":    {want: 10 * time.Second},
+		"invalid defaults to ten seconds":    {retryAfter: "later", want: 10 * time.Second},
+		"plus sign defaults to ten seconds":  {retryAfter: "+1", want: 10 * time.Second},
+		"underscore defaults to ten seconds": {retryAfter: "6_0", want: 10 * time.Second},
+		"full width defaults to ten seconds": {retryAfter: "６０", want: 10 * time.Second},
+		"zero defaults to ten seconds":       {retryAfter: "0", want: 10 * time.Second},
+		"negative defaults to ten seconds":   {retryAfter: "-3", want: 10 * time.Second},
+		"one second is honored":              {retryAfter: "1", want: time.Second},
+		"sixty seconds is honored":           {retryAfter: "60", want: 60 * time.Second},
+		"over sixty is clamped":              {retryAfter: "120", want: 60 * time.Second},
+		"huge integer is clamped":            {retryAfter: "9223372036854775808", want: 60 * time.Second},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			header := make(http.Header)
+			if tc.retryAfter != "" {
+				header.Set("Retry-After", tc.retryAfter)
+			}
+			if got := confirmationReaderBackpressureDelay(header); got != tc.want {
+				t.Fatalf("delay: got %s want %s", got, tc.want)
+			}
+		})
+	}
+	multiple := make(http.Header)
+	multiple.Add("Retry-After", "1")
+	multiple.Add("Retry-After", "60")
+	if got := confirmationReaderBackpressureDelay(multiple); got != 10*time.Second {
+		t.Fatalf("duplicate Retry-After: got %s want 10s", got)
+	}
+}
+
+func TestConfirmationReaderBackpressureRespectsHardElapsedDeadline(t *testing.T) {
+	var calls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"code":429,"message":"rate limited"}}`))
+	}))
+	defer upstream.Close()
+
+	result, callErr := postProviderWithRetryPolicy(
+		context.Background(),
+		upstream.Client(),
+		upstream.URL,
+		map[string]any{"model": "fixed/model"},
+		nil,
+		1024,
+		5,
+		providerRetryPolicy{
+			retryBackpressure:              true,
+			backpressureMaxAttempts:        confirmationReaderBackpressureMaxAttempts,
+			requireReceiptFreeBackpressure: true,
+			maxElapsed:                     5 * time.Millisecond,
+		},
+		defaultSleep,
+	)
+	if result != nil || callErr == nil || !callErr.timedOut {
+		t.Fatalf("deadline result=%v error=%v", result, callErr)
+	}
+	if calls != 1 {
+		t.Fatalf("deadline attempts: got %d want 1", calls)
+	}
+}
+
+func TestConfirmationReader503KeepsOrdinaryAttemptCap(t *testing.T) {
+	var calls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"code":503,"message":"capacity"}}`))
+	}))
+	defer upstream.Close()
+
+	result, callErr := postProviderWithRetryPolicy(
+		context.Background(), upstream.Client(), upstream.URL,
+		map[string]any{"model": "fixed/model"}, nil, 1024, 5,
+		providerRetryPolicy{
+			retryBackpressure:              true,
+			backpressureMaxAttempts:        confirmationReaderBackpressureMaxAttempts,
+			requireReceiptFreeBackpressure: true,
+			maxElapsed:                     confirmationReaderBackpressureMaxElapsed,
+		},
+		func(context.Context, time.Duration) {},
+	)
+	if callErr != nil || result == nil || result.status != http.StatusServiceUnavailable || result.attempts != providerMaxAttempts {
+		t.Fatalf("503 result=%v error=%v", result, callErr)
+	}
+	if calls != providerMaxAttempts {
+		t.Fatalf("503 attempts: got %d want %d", calls, providerMaxAttempts)
+	}
+}
+
+func TestConfirmationReaderBackpressurePropagatesParentCancellation(t *testing.T) {
+	var calls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"code":429,"message":"capacity"}}`))
+	}))
+	defer upstream.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	result, callErr := postProviderWithRetryPolicy(
+		ctx, upstream.Client(), upstream.URL,
+		map[string]any{"model": "fixed/model"}, nil, 1024, 5,
+		providerRetryPolicy{
+			retryBackpressure:              true,
+			backpressureMaxAttempts:        confirmationReaderBackpressureMaxAttempts,
+			requireReceiptFreeBackpressure: true,
+			maxElapsed:                     confirmationReaderBackpressureMaxElapsed,
+		},
+		func(context.Context, time.Duration) { cancel() },
+	)
+	if result != nil || callErr == nil || !callErr.timedOut {
+		t.Fatalf("cancel result=%v error=%v", result, callErr)
+	}
+	if calls != 1 {
+		t.Fatalf("cancel attempts: got %d want 1", calls)
+	}
+}
+
+func TestProviderBackpressureReceiptProofFailsClosed(t *testing.T) {
+	canonicalMetadata := `"openrouter_metadata":{
+		"requested":"fixed/model","strategy":"direct","attempt":0,
+		"endpoints":{"total":1,"available":[{
+			"provider":"DeepInfra","model":"fixed/model","selected":false
+		}]}
+	}`
+	tests := map[string]struct {
+		body string
+		want bool
+	}{
+		"string error is not canonical":  {body: `{"error":"rate limited"}`},
+		"canonical object error":         {body: `{"error":{"code":429,"message":"rate limited"}}`, want: true},
+		"canonical route metadata":       {body: `{"error":{"code":429,"message":"rate limited"},` + canonicalMetadata + `}`, want: true},
+		"missing error":                  {body: `{}`},
+		"malformed":                      {body: `{"error":`},
+		"non-finite number":              {body: `{"error":{"code":429,"message":"rate limited"},"value":NaN}`},
+		"positive infinity":              {body: `{"error":{"code":429,"message":"rate limited"},"value":Infinity}`},
+		"negative infinity":              {body: `{"error":{"code":429,"message":"rate limited"},"value":-Infinity}`},
+		"duplicate error":                {body: `{"error":"first","error":"second"}`},
+		"missing code":                   {body: `{"error":{"message":"rate limited"}}`},
+		"mismatched code":                {body: `{"error":{"code":503,"message":"rate limited"}}`},
+		"missing message":                {body: `{"error":{"code":429}}`},
+		"empty message":                  {body: `{"error":{"code":429,"message":""}}`},
+		"unknown error field":            {body: `{"error":{"code":429,"message":"rate limited","provider_name":"DeepInfra"}}`},
+		"unknown billing object":         {body: `{"error":{"code":429,"message":"rate limited"},"billing":{"amount_microusd":0}}`},
+		"unknown response id":            {body: `{"error":{"code":429,"message":"rate limited"},"response_id":"r"}`},
+		"unknown token usage":            {body: `{"error":{"code":429,"message":"rate limited"},"token_usage":{}}`},
+		"top level usage":                {body: `{"error":{"code":429,"message":"rate limited"},"usage":{}}`},
+		"nested usage":                   {body: `{"error":{"code":429,"message":"rate limited","metadata":{"usage":{}}}}`},
+		"cost":                           {body: `{"error":{"code":429,"message":"rate limited"},"cost":0}`},
+		"generation":                     {body: `{"error":{"code":429,"message":"rate limited"},"generation":"gen-1"}`},
+		"generation id":                  {body: `{"error":{"code":429,"message":"rate limited"},"generation_id":"gen-1"}`},
+		"provider":                       {body: `{"error":{"code":429,"message":"rate limited"},"provider":"DeepInfra"}`},
+		"choices":                        {body: `{"error":{"code":429,"message":"rate limited"},"choices":[]}`},
+		"receipt":                        {body: `{"error":{"code":429,"message":"rate limited"},"receipt":{"id":"r"}}`},
+		"receipt id":                     {body: `{"error":{"code":429,"message":"rate limited"},"receipt_id":"r"}`},
+		"billed flag":                    {body: `{"error":{"code":429,"message":"rate limited"},"billed":false}`},
+		"nested charged flag":            {body: `{"error":{"code":429,"message":"rate limited","metadata":{"charged":false}}}`},
+		"nested provider":                {body: `{"error":{"code":429,"message":"rate limited","metadata":{"provider":"DeepInfra"}}}`},
+		"nested cost in list":            {body: `{"error":{"code":429,"message":"rate limited","metadata":[{"cost":0}]}}`},
+		"nested receipt":                 {body: `{"error":{"code":429,"message":"rate limited","metadata":{"receipt":"r"}}}`},
+		"nested choices in list":         {body: `{"error":{"code":429,"message":"rate limited","metadata":[{"choices":[]}]}}`},
+		"metadata attempt one":           {body: `{"error":{"code":429,"message":"rate limited"},` + strings.Replace(canonicalMetadata, `"attempt":0`, `"attempt":1`, 1) + `}`},
+		"metadata negative zero attempt": {body: `{"error":{"code":429,"message":"rate limited"},` + strings.Replace(canonicalMetadata, `"attempt":0`, `"attempt":-0`, 1) + `}`},
+		"metadata attempts present":      {body: `{"error":{"code":429,"message":"rate limited"},` + strings.Replace(canonicalMetadata, `"attempt":0,`, `"attempt":0,"attempts":[],`, 1) + `}`},
+		"metadata endpoint selected":     {body: `{"error":{"code":429,"message":"rate limited"},` + strings.Replace(canonicalMetadata, `"selected":false`, `"selected":true`, 1) + `}`},
+		"metadata requested mismatch":    {body: `{"error":{"code":429,"message":"rate limited"},` + strings.Replace(canonicalMetadata, `"requested":"fixed/model"`, `"requested":"other/model"`, 1) + `}`},
+		"metadata model mismatch":        {body: `{"error":{"code":429,"message":"rate limited"},` + strings.Replace(canonicalMetadata, `"model":"fixed/model"`, `"model":"other/model"`, 1) + `}`},
+		"metadata provider mismatch":     {body: `{"error":{"code":429,"message":"rate limited"},` + strings.Replace(canonicalMetadata, `"provider":"DeepInfra"`, `"provider":"Azure"`, 1) + `}`},
+		"metadata null":                  {body: `{"error":{"code":429,"message":"rate limited"},"openrouter_metadata":null}`},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := providerBackpressureIsReceiptFree(&providerHTTPResult{
+				status: http.StatusTooManyRequests,
+				body:   []byte(tc.body),
+			}, "fixed/model", "deepinfra")
+			if got != tc.want {
+				t.Fatalf("receipt-free classification: got %v want %v", got, tc.want)
+			}
+		})
+	}
+	if providerBackpressureIsReceiptFree(&providerHTTPResult{
+		status: http.StatusInternalServerError,
+		body:   []byte(`{"error":"boom"}`),
+	}, "fixed/model", "deepinfra") {
+		t.Fatal("non-429/503 response was classified as receipt-free backpressure")
+	}
+}
 
 func decodeProviderBody(t *testing.T, body string) map[string]any {
 	t.Helper()
