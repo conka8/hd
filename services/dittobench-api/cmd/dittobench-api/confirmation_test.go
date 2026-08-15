@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -11,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ditto-assistant/dittobench-api/internal/longmemeval"
 )
 
 const (
@@ -750,6 +754,45 @@ func TestConfirmationExecutePublishesOnlyReviewedFailureStage(t *testing.T) {
 	for _, forbidden := range []string{"signed.example", "token", "credential-material"} {
 		if strings.Contains(recorder.Body.String(), forbidden) {
 			t.Fatalf("executor cause leaked %q through response: %s", forbidden, recorder.Body.String())
+		}
+	}
+}
+
+func TestConfirmationExecuteLogsOnlyAllowlistedHarnessDiagnostic(t *testing.T) {
+	executor := readyConfirmationExecutor()
+	executor.execute = func(context.Context, confirmationExecutionRequest) (confirmationExecutionResult, error) {
+		return confirmationExecutionResult{}, wrapConfirmationExecutionFailure(
+			"dimension_execution",
+			errors.Join(
+				errors.New("https://submitted.invalid/private?token=credential-material"),
+				&longmemeval.HarnessCaseFailure{Kind: "http_status", StatusCode: http.StatusInternalServerError},
+			),
+		)
+	}
+	var logs bytes.Buffer
+	originalWriter := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(originalWriter) })
+	recorder := executeConfirmationRequest(
+		t,
+		&server{confirmation: executor},
+		nil,
+		confirmationRequestBody(t, validConfirmationRequest()),
+	)
+	assertConfirmationError(
+		t,
+		recorder,
+		http.StatusUnprocessableEntity,
+		"confirmation execution failed at dimension_execution",
+	)
+	if !strings.Contains(logs.String(), "failure_class=longmem_run_http_status failure_status=500") {
+		t.Fatalf("safe harness diagnostic missing from log: %s", logs.String())
+	}
+	for _, output := range []string{logs.String(), recorder.Body.String()} {
+		for _, forbidden := range []string{"submitted.invalid", "private", "token", "credential-material"} {
+			if strings.Contains(output, forbidden) {
+				t.Fatalf("confirmation failure leaked %q: %s", forbidden, output)
+			}
 		}
 	}
 }

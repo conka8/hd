@@ -149,7 +149,10 @@ func (e Executor) Execute(
 			successDelta := afterReader.Successes - beforeReader.Successes
 			receiptDelta := afterReader.ReceiptedRequests - beforeReader.ReceiptedRequests
 			if requestDelta == 0 || requestDelta != successDelta || requestDelta != receiptDelta {
-				return ExecutionResult{}, errors.New("LongMemEval unjudgeable run lacks complete provider receipts")
+				return ExecutionResult{}, fmt.Errorf(
+					"LongMemEval unjudgeable run lacks complete provider receipts: %w",
+					operationErr,
+				)
 			}
 			current = next
 			outcomes = append(outcomes, Outcome{QuestionID: item.questionID, Correct: false})

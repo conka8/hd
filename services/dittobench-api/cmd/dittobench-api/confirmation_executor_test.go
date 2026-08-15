@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
@@ -295,6 +297,41 @@ func TestConfirmationExecutionFailurePreservesFirstReviewedStageAndCause(t *test
 	}
 	if strings.Contains(outer.Error(), cause.Error()) {
 		t.Fatalf("public error leaked cause: %q", outer.Error())
+	}
+}
+
+func TestConfirmationExecutionDiagnosticDoesNotDeriveFromPrivateErrorText(t *testing.T) {
+	err := wrapConfirmationExecutionFailure(
+		"dimension_execution",
+		errors.New("private submitted response credential-material"),
+	)
+	class, status := confirmationExecutionDiagnostic(err)
+	if class != "unclassified" || status != 0 {
+		t.Fatalf("diagnostic = %q, %d", class, status)
+	}
+}
+
+func TestConfirmationExecutionDiagnosticPreservesOnlySafeHarnessClass(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = writer.Write([]byte(`{"error":"private submitted response credential-material"}`))
+	}))
+	defer server.Close()
+	harness, err := longmemeval.NewHTTPHarness(server.URL, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = harness.Seed(context.Background(), protocol.SeedRequest{
+		UserID: "opaque-user", Pairs: []protocol.MemoryPair{},
+		Subjects: []protocol.Subject{}, Links: []protocol.SubjectLink{},
+	})
+	err = wrapConfirmationExecutionFailure("dimension_execution", err)
+	class, status := confirmationExecutionDiagnostic(err)
+	if class != "longmem_seed_http_status" || status != http.StatusUnprocessableEntity {
+		t.Fatalf("diagnostic = %q, %d", class, status)
+	}
+	if strings.Contains(err.Error(), "credential-material") {
+		t.Fatalf("private submitted response leaked through error: %v", err)
 	}
 }
 

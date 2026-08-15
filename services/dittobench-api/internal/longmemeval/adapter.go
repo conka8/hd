@@ -302,11 +302,78 @@ func (e *HarnessCaseFailure) Error() string {
 	return "LongMemEval harness returned an unjudgeable response"
 }
 
+// HarnessFailureDiagnostic is the complete safe-to-log view of a submitted
+// harness boundary failure. It deliberately excludes response bodies, URLs,
+// opaque case identities, and wrapped error text.
+type HarnessFailureDiagnostic struct {
+	Operation  string
+	Kind       string
+	StatusCode int
+}
+
+// FailureDiagnostic returns only an allowlisted, low-cardinality description
+// suitable for scorer-side operational logs. Unknown errors are intentionally
+// not derived from Error() text.
+func FailureDiagnostic(err error) (HarnessFailureDiagnostic, bool) {
+	var incomplete *incompleteSeedAcknowledgementError
+	var received *receivedHarnessResponseError
+	var responseIO *harnessResponseIOError
+	var responseTooLarge *harnessResponseTooLargeError
+	var caseFailure *HarnessCaseFailure
+	switch {
+	case errors.As(err, &incomplete):
+		return allowedHarnessDiagnostic(HarnessFailureDiagnostic{Operation: "seed", Kind: "incomplete_ack"})
+	case errors.As(err, &received):
+		return allowedHarnessDiagnostic(HarnessFailureDiagnostic{
+			Operation: received.operation, Kind: received.kind, StatusCode: received.statusCode,
+		})
+	case errors.As(err, &responseIO):
+		return allowedHarnessDiagnostic(HarnessFailureDiagnostic{
+			Operation: responseIO.operation, Kind: responseIO.kind, StatusCode: responseIO.statusCode,
+		})
+	case errors.As(err, &responseTooLarge):
+		return allowedHarnessDiagnostic(HarnessFailureDiagnostic{
+			Operation: responseTooLarge.operation, Kind: "response_too_large",
+		})
+	case errors.As(err, &caseFailure):
+		return allowedHarnessDiagnostic(HarnessFailureDiagnostic{
+			Operation: "run", Kind: caseFailure.Kind, StatusCode: caseFailure.StatusCode,
+		})
+	}
+	return HarnessFailureDiagnostic{}, false
+}
+
+func allowedHarnessDiagnostic(diagnostic HarnessFailureDiagnostic) (HarnessFailureDiagnostic, bool) {
+	if diagnostic.Operation != "seed" && diagnostic.Operation != "run" {
+		return HarnessFailureDiagnostic{}, false
+	}
+	switch diagnostic.Kind {
+	case "http_status", "malformed_json", "request", "response_read", "response_too_large", "missing_final_text":
+	case "incomplete_ack":
+		if diagnostic.Operation != "seed" {
+			return HarnessFailureDiagnostic{}, false
+		}
+	default:
+		return HarnessFailureDiagnostic{}, false
+	}
+	if diagnostic.StatusCode < 0 || diagnostic.StatusCode > 599 {
+		return HarnessFailureDiagnostic{}, false
+	}
+	return diagnostic, true
+}
+
+type incompleteSeedAcknowledgementError struct{}
+
+func (*incompleteSeedAcknowledgementError) Error() string {
+	return "LongMemEval harness acknowledged incomplete seed payload"
+}
+
 // receivedHarnessResponseError is intentionally unexported. Both /seed and
 // /run share the HTTP transport, but only Run is allowed to attribute a
 // received unjudgeable response to one scored case. Seed must remain fatal for
 // every acknowledgement failure.
 type receivedHarnessResponseError struct {
+	operation  string
 	kind       string
 	statusCode int
 }
@@ -316,9 +383,16 @@ type receivedHarnessResponseError struct {
 // may safely retry this class without duplicating memory. Run must continue to
 // fail closed because a repeated model/tool execution is not idempotent.
 type harnessResponseIOError struct {
+	operation  string
 	kind       string
 	statusCode int
 	cause      error
+}
+
+type harnessResponseTooLargeError struct{ operation string }
+
+func (*harnessResponseTooLargeError) Error() string {
+	return "LongMemEval harness response exceeds the public size bound"
 }
 
 func (e *harnessResponseIOError) Error() string {
@@ -378,7 +452,10 @@ func (h *HTTPHarness) Seed(ctx context.Context, request protocol.SeedRequest) (p
 		if err == nil {
 			break
 		}
-		if attempt >= seedMaxAttempts || !retryableSeedFailure(ctx, err) {
+		if ctx.Err() != nil {
+			return protocol.SeedResponse{}, ctx.Err()
+		}
+		if attempt >= seedMaxAttempts || !retryableSeedFailure(err) {
 			return protocol.SeedResponse{}, err
 		}
 		if !waitForSeedRetry(ctx, h.seedRetryDelay[attempt-1]) {
@@ -386,7 +463,7 @@ func (h *HTTPHarness) Seed(ctx context.Context, request protocol.SeedRequest) (p
 		}
 	}
 	if response.Pairs != len(request.Pairs) || response.Subjects != len(request.Subjects) || response.Links != len(request.Links) {
-		return protocol.SeedResponse{}, errors.New("LongMemEval harness acknowledged incomplete seed payload")
+		return protocol.SeedResponse{}, &incompleteSeedAcknowledgementError{}
 	}
 	return response, nil
 }
@@ -402,8 +479,8 @@ func waitForSeedRetry(ctx context.Context, delay time.Duration) bool {
 	}
 }
 
-func retryableSeedFailure(ctx context.Context, err error) bool {
-	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+func retryableSeedFailure(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 	var received *receivedHarnessResponseError
@@ -487,7 +564,7 @@ func (h *HTTPHarness) post(ctx context.Context, path string, input, output any) 
 	request.Header["User-Agent"] = []string{}
 	response, err := h.client.Do(request)
 	if err != nil {
-		return &harnessResponseIOError{kind: "request", cause: err}
+		return &harnessResponseIOError{operation: strings.TrimPrefix(path, "/"), kind: "request", cause: err}
 	}
 	defer response.Body.Close()
 
@@ -496,16 +573,23 @@ func (h *HTTPHarness) post(ctx context.Context, path string, input, output any) 
 	// its private contents are never included in the returned error.
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxHarnessResponseBytes+1))
 	if err != nil {
-		return &harnessResponseIOError{kind: "response_read", statusCode: response.StatusCode, cause: err}
+		return &harnessResponseIOError{
+			operation: strings.TrimPrefix(path, "/"), kind: "response_read",
+			statusCode: response.StatusCode, cause: err,
+		}
 	}
 	if len(raw) > maxHarnessResponseBytes {
-		return errors.New("LongMemEval harness response exceeds the public size bound")
+		return &harnessResponseTooLargeError{operation: strings.TrimPrefix(path, "/")}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return &receivedHarnessResponseError{kind: "http_status", statusCode: response.StatusCode}
+		return &receivedHarnessResponseError{
+			operation: strings.TrimPrefix(path, "/"), kind: "http_status", statusCode: response.StatusCode,
+		}
 	}
 	if err := json.Unmarshal(raw, output); err != nil {
-		return &receivedHarnessResponseError{kind: "malformed_json", statusCode: response.StatusCode}
+		return &receivedHarnessResponseError{
+			operation: strings.TrimPrefix(path, "/"), kind: "malformed_json", statusCode: response.StatusCode,
+		}
 	}
 	return nil
 }
