@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.74.0 (2026-08-15)
+
+### Features
+
+- **benchmark**: Add v10 runtime controls
+  ([#851](https://github.com/ditto-assistant/ditto-subnet/pull/851),
+  [`d39d9c3`](https://github.com/ditto-assistant/ditto-subnet/commit/d39d9c354c9d89736c4c0a1bd051a992f28bd930))
+
+
 ## v0.73.0 (2026-08-15)
 
 ### Features
