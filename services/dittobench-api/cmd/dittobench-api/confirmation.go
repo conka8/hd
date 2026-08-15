@@ -16,11 +16,13 @@ import (
 )
 
 const (
-	confirmationPurpose      = "v9_confirmation_bundle"
-	confirmationBenchVersion = 9
-	confirmationBodyLimit    = 1 << 20
-	confirmationMaxRequests  = 100_000
-	confirmationMaxTokens    = 100_000_000
+	confirmationPurpose             = "v9_confirmation_bundle"
+	confirmationBenchVersion        = 9
+	confirmationBodyLimit           = 1 << 20
+	confirmationMaxRequests         = 100_000
+	confirmationMaxTokens           = 100_000_000
+	confirmationFailureClassHeader  = "X-Ditto-Confirmation-Failure-Class"
+	confirmationFailureStatusHeader = "X-Ditto-Confirmation-Failure-Status"
 )
 
 type confirmationReadiness struct {
@@ -216,6 +218,14 @@ func (s *server) handleConfirmationExecute(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		stage := confirmationExecutionStage(err)
 		failureClass, failureStatus := confirmationExecutionDiagnostic(err)
+		if failureClass != "unclassified" {
+			// This protected scorer-to-validator response carries only the same
+			// bounded diagnostic already admitted to local scorer logs. Keep the
+			// public JSON body byte-stable and never forward wrapped error text,
+			// response bodies, opaque identities, or source details.
+			w.Header().Set(confirmationFailureClassHeader, failureClass)
+			w.Header().Set(confirmationFailureStatusHeader, fmt.Sprintf("%d", failureStatus))
+		}
 		log.Printf(
 			"confirmation execution failed: stage=%s failure_class=%s failure_status=%d bundle_id=%s agent_id=%s slot_id=%s",
 			stage,

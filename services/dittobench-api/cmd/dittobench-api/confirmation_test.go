@@ -785,6 +785,12 @@ func TestConfirmationExecuteLogsOnlyAllowlistedHarnessDiagnostic(t *testing.T) {
 		http.StatusUnprocessableEntity,
 		"confirmation execution failed at dimension_execution",
 	)
+	if got := recorder.Header().Get(confirmationFailureClassHeader); got != "longmem_run_http_status" {
+		t.Fatalf("failure class header = %q", got)
+	}
+	if got := recorder.Header().Get(confirmationFailureStatusHeader); got != "500" {
+		t.Fatalf("failure status header = %q", got)
+	}
 	if !strings.Contains(logs.String(), "failure_class=longmem_run_http_status failure_status=500") {
 		t.Fatalf("safe harness diagnostic missing from log: %s", logs.String())
 	}
@@ -793,6 +799,39 @@ func TestConfirmationExecuteLogsOnlyAllowlistedHarnessDiagnostic(t *testing.T) {
 			if strings.Contains(output, forbidden) {
 				t.Fatalf("confirmation failure leaked %q: %s", forbidden, output)
 			}
+		}
+	}
+}
+
+func TestConfirmationExecuteOmitsDiagnosticHeadersForUnclassifiedFailure(t *testing.T) {
+	executor := readyConfirmationExecutor()
+	executor.execute = func(context.Context, confirmationExecutionRequest) (confirmationExecutionResult, error) {
+		return confirmationExecutionResult{}, wrapConfirmationExecutionFailure(
+			"dimension_execution",
+			errors.New("private submitted response credential-material"),
+		)
+	}
+	recorder := executeConfirmationRequest(
+		t,
+		&server{confirmation: executor},
+		nil,
+		confirmationRequestBody(t, validConfirmationRequest()),
+	)
+	assertConfirmationError(
+		t,
+		recorder,
+		http.StatusUnprocessableEntity,
+		"confirmation execution failed at dimension_execution",
+	)
+	if got := recorder.Header().Get(confirmationFailureClassHeader); got != "" {
+		t.Fatalf("unclassified failure exposed class header %q", got)
+	}
+	if got := recorder.Header().Get(confirmationFailureStatusHeader); got != "" {
+		t.Fatalf("unclassified failure exposed status header %q", got)
+	}
+	for _, forbidden := range []string{"private", "credential-material"} {
+		if strings.Contains(recorder.Body.String(), forbidden) {
+			t.Fatalf("private failure leaked %q through response: %s", forbidden, recorder.Body.String())
 		}
 	}
 }
