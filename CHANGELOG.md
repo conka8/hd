@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.68.17 (2026-08-15)
+
+### Bug Fixes
+
+- **platform**: Enforce confirmation retry deadline
+  ([#828](https://github.com/ditto-assistant/ditto-subnet/pull/828),
+  [`6ff9e55`](https://github.com/ditto-assistant/ditto-subnet/commit/6ff9e55619bc274e0607b96cffbc71b3760b466c))
+
+- **release**: Accelerate relay and controller deploys
+  ([#829](https://github.com/ditto-assistant/ditto-subnet/pull/829),
+  [`238ded1`](https://github.com/ditto-assistant/ditto-subnet/commit/238ded13caaee3ee5f8ff387ce1ed91eb3cbdd8f))
+
+
 ## v0.68.16 (2026-08-15)
 
 ### Bug Fixes
