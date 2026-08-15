@@ -131,7 +131,8 @@ func classifyTransportError(err error) (dial bool, timeout bool) {
 // fails closed. Each attempt gets its own timeout of timeoutSeconds. The
 // response body is buffered up to maxBody+1 bytes.
 func postProviderWithRetry(ctx context.Context, client *http.Client, url string, payload any,
-	headers map[string]string, maxBody int64, timeoutSeconds int, retryBackpressure bool, sleep sleepFunc) (*providerHTTPResult, *providerCallError) {
+	headers map[string]string, maxBody int64, timeoutSeconds int, retryBackpressure bool,
+	retryPreProviderNotFoundModel string, sleep sleepFunc) (*providerHTTPResult, *providerCallError) {
 
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -152,7 +153,9 @@ func postProviderWithRetry(ctx context.Context, client *http.Client, url string,
 			}
 			return nil, &providerCallError{attempts: attempt, timedOut: timedOut}
 		}
-		if isProviderRetryStatus(result.status) && attempt < providerMaxAttempts &&
+		retryableStatus := isProviderRetryStatus(result.status) ||
+			isRetryablePreProviderNotFound(result, retryPreProviderNotFoundModel)
+		if retryableStatus && attempt < providerMaxAttempts &&
 			(retryBackpressure || !providerIsBackpressure(result.status, result.header)) {
 			var delay time.Duration
 			if providerIsBackpressure(result.status, result.header) {
@@ -168,6 +171,136 @@ func postProviderWithRetry(ctx context.Context, client *http.Client, url string,
 	}
 	// Unreachable: the loop always returns.
 	return nil, &providerCallError{attempts: providerMaxAttempts, timedOut: false}
+}
+
+// isRetryablePreProviderNotFound recognizes OpenRouter's documented
+// "No providers available" routing result. An attempt value of zero means the
+// request never reached a provider, so retrying the identical frozen request
+// cannot duplicate provider work or billing. Every ambiguous shape fails
+// closed; ordinary 404s remain terminal.
+func isRetryablePreProviderNotFound(result *providerHTTPResult, expectedModel string) bool {
+	if result == nil || result.status != http.StatusNotFound || expectedModel == "" {
+		return false
+	}
+	decoded, ok := decodeJSONNumbersRejectDuplicateKeys(result.body)
+	if !ok {
+		return false
+	}
+	payload, ok := decoded.(map[string]any)
+	if !ok {
+		return false
+	}
+	errorPayload, ok := payload["error"].(map[string]any)
+	if !ok {
+		return false
+	}
+	code, ok := isIntLiteral(errorPayload["code"])
+	if !ok || code.String() != "404" {
+		return false
+	}
+	metadata, ok := payload["openrouter_metadata"].(map[string]any)
+	if !ok || metadata["requested"] != expectedModel {
+		return false
+	}
+	attempt, ok := isIntLiteral(metadata["attempt"])
+	if !ok || attempt.String() != "0" {
+		return false
+	}
+	if _, present := metadata["attempts"]; present {
+		return false
+	}
+	endpoints, ok := metadata["endpoints"].(map[string]any)
+	if !ok {
+		return false
+	}
+	available, ok := endpoints["available"].([]any)
+	if !ok || len(available) == 0 || len(available) > 100 {
+		return false
+	}
+	for _, raw := range available {
+		endpoint, ok := raw.(map[string]any)
+		if !ok || endpoint["selected"] != false {
+			return false
+		}
+	}
+	for _, forbidden := range []string{
+		"id", "generation", "generation_id", "model", "provider", "choices", "usage", "cost",
+	} {
+		if _, present := payload[forbidden]; present {
+			return false
+		}
+	}
+	return true
+}
+
+// decodeJSONNumbersRejectDuplicateKeys parses one JSON document while
+// rejecting duplicate object keys at every depth. The pre-provider retry
+// classifier is an accounting boundary: contradictory last-key-wins metadata
+// must never authorize another upstream attempt.
+func decodeJSONNumbersRejectDuplicateKeys(body []byte) (any, bool) {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	decoded, err := decodeUniqueJSONValue(dec)
+	if err != nil {
+		return nil, false
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return nil, false
+	}
+	return decoded, true
+}
+
+func decodeUniqueJSONValue(dec *json.Decoder) (any, error) {
+	token, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	delim, isDelim := token.(json.Delim)
+	if !isDelim {
+		return token, nil
+	}
+	switch delim {
+	case '{':
+		object := make(map[string]any)
+		for dec.More() {
+			keyToken, err := dec.Token()
+			if err != nil {
+				return nil, err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return nil, errors.New("JSON object key is not a string")
+			}
+			if _, duplicate := object[key]; duplicate {
+				return nil, errors.New("duplicate JSON object key")
+			}
+			value, err := decodeUniqueJSONValue(dec)
+			if err != nil {
+				return nil, err
+			}
+			object[key] = value
+		}
+		if closeToken, err := dec.Token(); err != nil || closeToken != json.Delim('}') {
+			return nil, errors.New("invalid JSON object terminator")
+		}
+		return object, nil
+	case '[':
+		array := make([]any, 0)
+		for dec.More() {
+			value, err := decodeUniqueJSONValue(dec)
+			if err != nil {
+				return nil, err
+			}
+			array = append(array, value)
+		}
+		if closeToken, err := dec.Token(); err != nil || closeToken != json.Delim(']') {
+			return nil, errors.New("invalid JSON array terminator")
+		}
+		return array, nil
+	default:
+		return nil, errors.New("unexpected JSON delimiter")
+	}
 }
 
 func backoffDelay(attempt int) time.Duration {
@@ -676,7 +809,7 @@ func completeChatWithRecovery(ctx context.Context, client *http.Client, cfg conf
 	for _, spec := range phases {
 		lastPhase = spec.phase
 		result, callErr := postProviderWithRetry(ctx, client, cfg.UpstreamURL, spec.payload, headers,
-			cfg.ResponseBodyBytes, cfg.TimeoutSeconds, true, sleep)
+			cfg.ResponseBodyBytes, cfg.TimeoutSeconds, true, "", sleep)
 		if callErr != nil {
 			totalAttempts += callErr.attempts
 			lastTimedOut = callErr.timedOut
@@ -803,7 +936,7 @@ func postEmbeddingProvider(ctx context.Context, client *http.Client, cfg config.
 				"Authorization": "Bearer " + cfg.PerplexityAPIKey,
 				"Content-Type":  "application/json",
 			},
-			cfg.EmbeddingResponseBodyBytes, cfg.TimeoutSeconds, false, sleep)
+			cfg.EmbeddingResponseBodyBytes, cfg.TimeoutSeconds, false, "", sleep)
 		if direct != nil && direct.status < 400 {
 			return &embeddingProviderResult{result: direct, attempts: direct.attempts, direct: true}, nil
 		}
@@ -824,7 +957,7 @@ func postEmbeddingProvider(ctx context.Context, client *http.Client, cfg config.
 			},
 		},
 		openrouterHeaders(cfg.OpenRouterAPIKey, false),
-		cfg.EmbeddingResponseBodyBytes, cfg.TimeoutSeconds, false, sleep)
+		cfg.EmbeddingResponseBodyBytes, cfg.TimeoutSeconds, false, "", sleep)
 	if orErr != nil {
 		priorAttempts := 0
 		if directErr != nil {
