@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.73.0 (2026-08-15)
+
+### Features
+
+- **dashboard**: Mobile card layouts for pipeline, fleet, and submissions
+  ([#855](https://github.com/ditto-assistant/ditto-subnet/pull/855),
+  [`34ea07e`](https://github.com/ditto-assistant/ditto-subnet/commit/34ea07e2e39c76fe8618427373238775d5c7818f))
+
+
 ## v0.72.0 (2026-08-15)
 
 ### Bug Fixes
