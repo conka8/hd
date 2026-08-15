@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.68.8 (2026-08-15)
+
+### Bug Fixes
+
+- **platform**: Extend LongMem reader backpressure recovery
+  ([`6e10442`](https://github.com/ditto-assistant/ditto-subnet/commit/6e10442667ab7f5662ea8325df606567c5f6973f))
+
+
 ## v0.68.7 (2026-08-15)
 
 ### Bug Fixes
