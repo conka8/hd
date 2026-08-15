@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.74.1 (2026-08-15)
+
+### Bug Fixes
+
+- **scoring**: Seal LongMem case isolation
+  ([`869024e`](https://github.com/ditto-assistant/ditto-subnet/commit/869024ef22d78d50a61e587e5893843613ae66dd))
+
+
 ## v0.74.0 (2026-08-15)
 
 ### Features
