@@ -2,6 +2,18 @@
 
 <!-- version list -->
 
+## v0.68.9 (2026-08-15)
+
+### Bug Fixes
+
+- **platform**: Route continual retests authoritatively
+  ([#812](https://github.com/ditto-assistant/ditto-subnet/pull/812),
+  [`139ab8f`](https://github.com/ditto-assistant/ditto-subnet/commit/139ab8f5690aec00664d97582a0ad73728a90822))
+
+- **scoring**: Retry idempotent LongMem seeds
+  ([`e494216`](https://github.com/ditto-assistant/ditto-subnet/commit/e4942165d034b2984192efc3a2ecb516cd96a641))
+
+
 ## v0.68.8 (2026-08-15)
 
 ### Bug Fixes
