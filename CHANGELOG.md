@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.68.2 (2026-08-15)
+
+### Bug Fixes
+
+- **dittobench**: Decode official LongMem numeric answers
+  ([#807](https://github.com/ditto-assistant/ditto-subnet/pull/807),
+  [`160d3ad`](https://github.com/ditto-assistant/ditto-subnet/commit/160d3ada26a9a26a33f6e54489e84c8884bc8ae9))
+
+
 ## v0.68.1 (2026-08-15)
 
 ### Bug Fixes
