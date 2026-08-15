@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.68.1 (2026-08-15)
+
+### Bug Fixes
+
+- **release**: Skip unrelated root verification
+  ([#804](https://github.com/ditto-assistant/ditto-subnet/pull/804),
+  [`d96b2ab`](https://github.com/ditto-assistant/ditto-subnet/commit/d96b2abd6c376e537606c39ae9b16fb9a8101514))
+
+
 ## v0.68.0 (2026-08-15)
 
 ### Bug Fixes
