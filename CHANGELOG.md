@@ -2,6 +2,29 @@
 
 <!-- version list -->
 
+## v0.68.5 (2026-08-15)
+
+### Bug Fixes
+
+- **platform**: Anchor the crown on the defended score
+  ([#783](https://github.com/ditto-assistant/ditto-subnet/pull/783),
+  [`224b3cc`](https://github.com/ditto-assistant/ditto-subnet/commit/224b3cc08fd57e9a4ab75bb60f27282858317559))
+
+- **platform**: Represent an owner by its newest tied generation
+  ([#786](https://github.com/ditto-assistant/ditto-subnet/pull/786),
+  [`183163d`](https://github.com/ditto-assistant/ditto-subnet/commit/183163d55288c373091f0b9c81120f0f1107df2f))
+
+- **release**: Standardize managed validator capacity
+  ([#806](https://github.com/ditto-assistant/ditto-subnet/pull/806),
+  [`816bc7a`](https://github.com/ditto-assistant/ditto-subnet/commit/816bc7a632e3db5023a81fd4a06af31ecd78a291))
+
+### Chores
+
+- **tests**: Harden LongMem retry accounting
+  ([#810](https://github.com/ditto-assistant/ditto-subnet/pull/810),
+  [`998562a`](https://github.com/ditto-assistant/ditto-subnet/commit/998562a9dfac64c3b9a5738d5e147375124b7447))
+
+
 ## v0.68.4 (2026-08-15)
 
 ### Bug Fixes
