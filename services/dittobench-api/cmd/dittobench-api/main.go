@@ -1372,7 +1372,7 @@ func (s *server) runSizeJob(ctx context.Context, runID string, req submitRequest
 	// only after the canonical dataset artifact is complete. The grader and report restore
 	// canonical IDs; the harness sees only this projected view.
 	var harnessProjection *gen.HarnessProjection
-	if req.BenchVersion == protocol.BenchVersionV9 {
+	if req.BenchVersion >= protocol.BenchVersionV9 {
 		blindingKey := make([]byte, sha256.Size)
 		if _, artifactErr = cryptorand.Read(blindingKey); artifactErr != nil {
 			s.store.Fail(runID, "v9 harness projection entropy unavailable")
@@ -2022,7 +2022,7 @@ func (s *server) runSizeJob(ctx context.Context, runID string, req submitRequest
 		}
 	}
 	if tSHA, tBody, tErr := tArtifact.canonicalBytes(); tErr != nil {
-		if req.BenchVersion == protocol.BenchVersionV9 {
+		if req.BenchVersion >= protocol.BenchVersionV9 {
 			s.store.Fail(runID, "v9 transcript evidence hashing failed")
 			return
 		}
@@ -2606,7 +2606,7 @@ func harnessSandboxEnvForProvider(reqEnv map[string]string, benchVersion int, pr
 		embeddingGateway = "http://host.docker.internal:" + strconv.Itoa(brokerPort)
 	}
 	env := map[string]string{}
-	if benchVersion != protocol.BenchVersionV9 {
+	if benchVersion < protocol.BenchVersionV9 {
 		for k, v := range sandboxRuntimeEnv(reqEnv) {
 			if lockedEnvKeys[k] {
 				continue // the lock owns these; callers cannot set them
