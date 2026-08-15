@@ -2,6 +2,34 @@
 
 <!-- version list -->
 
+## v0.68.15 (2026-08-15)
+
+### Bug Fixes
+
+- **platform**: Expose active efficiency tiebreak
+  ([#825](https://github.com/ditto-assistant/ditto-subnet/pull/825),
+  [`c77ec54`](https://github.com/ditto-assistant/ditto-subnet/commit/c77ec543c2357cf707084df00a2d9d2cd757164c))
+
+- **platform**: Persist validator name cache
+  ([#822](https://github.com/ditto-assistant/ditto-subnet/pull/822),
+  [`35648ad`](https://github.com/ditto-assistant/ditto-subnet/commit/35648ad72c7e4c5337760d92f11c1a25f1cf0f49))
+
+- **platform**: Reuse pipeline ranking snapshot
+  ([#821](https://github.com/ditto-assistant/ditto-subnet/pull/821),
+  [`7df6752`](https://github.com/ditto-assistant/ditto-subnet/commit/7df67526718c7db9ca58946973aaa5f590b8cd2b))
+
+- **protocol**: Accept additive JSON fields
+  ([#823](https://github.com/ditto-assistant/ditto-subnet/pull/823),
+  [`4199ca0`](https://github.com/ditto-assistant/ditto-subnet/commit/4199ca0a4ade2075afbde773316c67e3d1c69435))
+
+- **scoring**: Preserve zero ablation usage fields
+  ([`cf02a86`](https://github.com/ditto-assistant/ditto-subnet/commit/cf02a861294e71f036bdba1039b3bd97809b2d40))
+
+- **validator**: Reclaim obsolete managed images
+  ([#826](https://github.com/ditto-assistant/ditto-subnet/pull/826),
+  [`d87a2ac`](https://github.com/ditto-assistant/ditto-subnet/commit/d87a2acba3c1737f14d5be199398a88f361e5673))
+
+
 ## v0.68.14 (2026-08-15)
 
 ### Bug Fixes
