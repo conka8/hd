@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.66.3 (2026-08-15)
+
+### Bug Fixes
+
+- **release**: Restore frozen relay compatibility source
+  ([#794](https://github.com/ditto-assistant/ditto-subnet/pull/794),
+  [`a2211d9`](https://github.com/ditto-assistant/ditto-subnet/commit/a2211d904638ffde14f43a2a3f4aed68958ef1c1))
+
+
 ## v0.66.2 (2026-08-15)
 
 ### Bug Fixes
