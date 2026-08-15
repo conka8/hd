@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.68.10 (2026-08-15)
+
+### Bug Fixes
+
+- **dittobench**: Queue embedding backpressure safely
+  ([#805](https://github.com/ditto-assistant/ditto-subnet/pull/805),
+  [`83898c2`](https://github.com/ditto-assistant/ditto-subnet/commit/83898c286c4d31b01b1de087b54f87b19fbd1456))
+
+
 ## v0.68.9 (2026-08-15)
 
 ### Bug Fixes
