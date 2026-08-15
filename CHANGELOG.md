@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.68.12 (2026-08-15)
+
+### Bug Fixes
+
+- **scoring**: Classify LongMem harness failures
+  ([`dab2175`](https://github.com/ditto-assistant/ditto-subnet/commit/dab21759b3e557a08ae7d28a3ad64393712f6a35))
+
+
 ## v0.68.11 (2026-08-15)
 
 ### Bug Fixes
