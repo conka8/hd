@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.68.6 (2026-08-15)
+
+### Bug Fixes
+
+- **scoring**: Tolerate unjudgeable LongMem cases
+  ([#811](https://github.com/ditto-assistant/ditto-subnet/pull/811),
+  [`b23c048`](https://github.com/ditto-assistant/ditto-subnet/commit/b23c04867eb58fa342222ed5886dce133e08b1d1))
+
+
 ## v0.68.5 (2026-08-15)
 
 ### Bug Fixes
