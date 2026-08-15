@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.75.0 (2026-08-15)
+
+### Features
+
+- **dashboard**: Surface current on-chain weights on leaderboard and fleet
+  ([#856](https://github.com/ditto-assistant/ditto-subnet/pull/856),
+  [`f97e70e`](https://github.com/ditto-assistant/ditto-subnet/commit/f97e70e5bfffe245110d1978f8f7dd62cf178cad))
+
+
 ## v0.74.1 (2026-08-15)
 
 ### Bug Fixes
