@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.68.19 (2026-08-15)
+
+### Bug Fixes
+
+- **platform**: Allow disabled public disk ceiling
+  ([#833](https://github.com/ditto-assistant/ditto-subnet/pull/833),
+  [`68e2227`](https://github.com/ditto-assistant/ditto-subnet/commit/68e22279daea7d1dadf656319a5e54396eefc411))
+
+
 ## v0.68.18 (2026-08-15)
 
 ### Bug Fixes
