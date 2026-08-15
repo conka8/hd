@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.66.1 (2026-08-15)
+
+### Bug Fixes
+
+- **release**: Build relay compatibility beside scorers
+  ([#793](https://github.com/ditto-assistant/ditto-subnet/pull/793),
+  [`b5142ea`](https://github.com/ditto-assistant/ditto-subnet/commit/b5142ea37ae96b3a6e3987491af7f396ad9b7f19))
+
+
 ## v0.66.0 (2026-08-15)
 
 ### Bug Fixes
