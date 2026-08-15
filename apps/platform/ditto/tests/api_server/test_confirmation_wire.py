@@ -174,6 +174,36 @@ def test_real_go_shape_unavailable_evidence_is_preserved_fail_closed(
         ):
             evidence[key] = 0
         evidence["sample_count"] = 0
+        evidence["affected_call_count"] = 0
+        usage = evidence["synthetic_usage"]
+        assert isinstance(usage, dict)
+        lane_fields = (
+            ("chat_attempts", "chat_applied", "chat_input_bytes")
+            if dimension_name == "inference_ablation"
+            else (
+                "embedding_attempts",
+                "embedding_applied",
+                "embedding_inputs",
+                "embedding_input_bytes",
+            )
+        )
+        for key in lane_fields:
+            # These explicit zeros are the exact Go wire contract. Omitting
+            # them must fail before Platform report preparation.
+            usage[key] = 0
+        missing = copy.deepcopy(evidence)
+        missing_usage = missing["synthetic_usage"]
+        assert isinstance(missing_usage, dict)
+        missing_usage.pop(lane_fields[0])
+        with pytest.raises(ConfirmationWireError, match="fields drifted"):
+            broken = copy.deepcopy(fixture)
+            broken_dimension = broken[dimension_name]
+            assert isinstance(broken_dimension, dict)
+            broken_dimension["evidence"] = missing
+            completion_report_from_go_fixture(
+                broken,
+                ablation_coordinator_latency_ms=ABLATION_COORDINATOR_LATENCY_MS,
+            )
         canonical = json.dumps(
             evidence, ensure_ascii=False, separators=(",", ":")
         ).encode()

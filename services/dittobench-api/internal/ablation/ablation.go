@@ -157,6 +157,58 @@ type Usage struct {
 	UpstreamProviderCostMicroUSD uint64       `json:"upstream_provider_cost_microusd"`
 }
 
+// MarshalJSON preserves the intervention-specific synthetic usage schema even
+// when every counter is zero. The shared confirmation adapter requires the
+// applicable lane counters to be present and rejects counters from the other
+// lane. Plain omitempty tags cannot express that contract: a valid zero-use
+// report would otherwise omit its required lane fields.
+func (u Usage) MarshalJSON() ([]byte, error) {
+	type usageWire struct {
+		Synthetic                    bool         `json:"synthetic"`
+		TelemetryNamespace           string       `json:"telemetry_namespace"`
+		Intervention                 Intervention `json:"intervention"`
+		Budget                       Budget       `json:"budget"`
+		ChatAttempts                 *uint64      `json:"chat_attempts,omitempty"`
+		ChatApplied                  *uint64      `json:"chat_applied,omitempty"`
+		ChatInputBytes               *uint64      `json:"chat_input_bytes,omitempty"`
+		EmbeddingAttempts            *uint64      `json:"embedding_attempts,omitempty"`
+		EmbeddingApplied             *uint64      `json:"embedding_applied,omitempty"`
+		EmbeddingInputs              *uint64      `json:"embedding_inputs,omitempty"`
+		EmbeddingInputBytes          *uint64      `json:"embedding_input_bytes,omitempty"`
+		RejectedRequests             uint64       `json:"rejected_requests,omitempty"`
+		BudgetExhausted              bool         `json:"budget_exhausted,omitempty"`
+		UpstreamRequests             uint64       `json:"upstream_requests"`
+		UpstreamInputTokens          uint64       `json:"upstream_input_tokens"`
+		UpstreamOutputTokens         uint64       `json:"upstream_output_tokens"`
+		UpstreamProviderCostMicroUSD uint64       `json:"upstream_provider_cost_microusd"`
+	}
+	wire := usageWire{
+		Synthetic:                    u.Synthetic,
+		TelemetryNamespace:           u.TelemetryNamespace,
+		Intervention:                 u.Intervention,
+		Budget:                       u.Budget,
+		RejectedRequests:             u.RejectedRequests,
+		BudgetExhausted:              u.BudgetExhausted,
+		UpstreamRequests:             u.UpstreamRequests,
+		UpstreamInputTokens:          u.UpstreamInputTokens,
+		UpstreamOutputTokens:         u.UpstreamOutputTokens,
+		UpstreamProviderCostMicroUSD: u.UpstreamProviderCostMicroUSD,
+	}
+	if u.Intervention == InterventionInference || u.ChatAttempts != 0 || u.ChatApplied != 0 || u.ChatInputBytes != 0 {
+		wire.ChatAttempts = &u.ChatAttempts
+		wire.ChatApplied = &u.ChatApplied
+		wire.ChatInputBytes = &u.ChatInputBytes
+	}
+	if u.Intervention == InterventionEmbedding || u.EmbeddingAttempts != 0 || u.EmbeddingApplied != 0 ||
+		u.EmbeddingInputs != 0 || u.EmbeddingInputBytes != 0 {
+		wire.EmbeddingAttempts = &u.EmbeddingAttempts
+		wire.EmbeddingApplied = &u.EmbeddingApplied
+		wire.EmbeddingInputs = &u.EmbeddingInputs
+		wire.EmbeddingInputBytes = &u.EmbeddingInputBytes
+	}
+	return json.Marshal(wire)
+}
+
 func telemetryNamespace(intervention Intervention) string {
 	return "dittobench.v9.ablation." + string(intervention)
 }

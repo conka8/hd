@@ -8,6 +8,7 @@ import (
 	"errors"
 	"math"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1514,6 +1515,132 @@ func TestOffModeProducesNeutralNotRunEvidence(t *testing.T) {
 	activeInput := evaluationInput(InterventionInference, ModeOff, active)
 	if _, err := Evaluate(activeInput); err == nil {
 		t.Fatal("off mode accepted synthetic activity")
+	}
+}
+
+func TestUsageMarshalPreservesRequiredZeroLaneCounters(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name             string
+		usage            Usage
+		wantUsageKeys    []string
+		wantBudgetKeys   []string
+		wantZeroCounters []string
+		forbiddenKeys    []string
+	}{
+		{
+			name: "inference",
+			usage: Usage{
+				Synthetic:          true,
+				TelemetryNamespace: telemetryNamespace(InterventionInference),
+				Intervention:       InterventionInference,
+				Budget: Budget{
+					MaxChatRequests:   4,
+					MaxChatInputBytes: 256,
+				},
+			},
+			wantUsageKeys: []string{
+				"synthetic", "telemetry_namespace", "intervention", "budget",
+				"chat_attempts", "chat_applied", "chat_input_bytes",
+				"upstream_requests", "upstream_input_tokens", "upstream_output_tokens",
+				"upstream_provider_cost_microusd",
+			},
+			wantBudgetKeys:   []string{"max_chat_requests", "max_chat_input_bytes"},
+			wantZeroCounters: []string{"chat_attempts", "chat_applied", "chat_input_bytes"},
+			forbiddenKeys: []string{
+				"embedding_attempts", "embedding_applied", "embedding_inputs", "embedding_input_bytes",
+			},
+		},
+		{
+			name: "embedding",
+			usage: Usage{
+				Synthetic:          true,
+				TelemetryNamespace: telemetryNamespace(InterventionEmbedding),
+				Intervention:       InterventionEmbedding,
+				Budget: Budget{
+					MaxEmbeddingRequests:   4,
+					MaxEmbeddingInputs:     4,
+					MaxEmbeddingInputBytes: 256,
+				},
+			},
+			wantUsageKeys: []string{
+				"synthetic", "telemetry_namespace", "intervention", "budget",
+				"embedding_attempts", "embedding_applied", "embedding_inputs", "embedding_input_bytes",
+				"upstream_requests", "upstream_input_tokens", "upstream_output_tokens",
+				"upstream_provider_cost_microusd",
+			},
+			wantBudgetKeys: []string{
+				"max_embedding_requests", "max_embedding_inputs", "max_embedding_input_bytes",
+			},
+			wantZeroCounters: []string{
+				"embedding_attempts", "embedding_applied", "embedding_inputs", "embedding_input_bytes",
+			},
+			forbiddenKeys: []string{"chat_attempts", "chat_applied", "chat_input_bytes"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			raw, err := json.Marshal(test.usage)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &wire); err != nil {
+				t.Fatal(err)
+			}
+			gotKeys := make([]string, 0, len(wire))
+			for key := range wire {
+				gotKeys = append(gotKeys, key)
+			}
+			sort.Strings(gotKeys)
+			wantKeys := append([]string(nil), test.wantUsageKeys...)
+			sort.Strings(wantKeys)
+			if !reflect.DeepEqual(gotKeys, wantKeys) {
+				t.Fatalf("usage keys = %v, want %v; JSON=%s", gotKeys, wantKeys, raw)
+			}
+			for _, key := range test.wantZeroCounters {
+				if string(wire[key]) != "0" {
+					t.Fatalf("%s = %s, want explicit zero; JSON=%s", key, wire[key], raw)
+				}
+			}
+			for _, key := range test.forbiddenKeys {
+				if _, exists := wire[key]; exists {
+					t.Fatalf("opposite-lane field %q leaked into %s usage: %s", key, test.name, raw)
+				}
+			}
+
+			var budget map[string]json.RawMessage
+			if err := json.Unmarshal(wire["budget"], &budget); err != nil {
+				t.Fatal(err)
+			}
+			gotBudgetKeys := make([]string, 0, len(budget))
+			for key := range budget {
+				gotBudgetKeys = append(gotBudgetKeys, key)
+			}
+			sort.Strings(gotBudgetKeys)
+			wantBudgetKeys := append([]string(nil), test.wantBudgetKeys...)
+			sort.Strings(wantBudgetKeys)
+			if !reflect.DeepEqual(gotBudgetKeys, wantBudgetKeys) {
+				t.Fatalf("budget keys = %v, want %v; JSON=%s", gotBudgetKeys, wantBudgetKeys, raw)
+			}
+		})
+	}
+}
+
+func TestUsageMarshalDoesNotHideOppositeLaneActivity(t *testing.T) {
+	t.Parallel()
+	usage := Usage{
+		Intervention:      InterventionInference,
+		EmbeddingAttempts: 1,
+	}
+	raw, err := json.Marshal(usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte(`"embedding_attempts":1`)) {
+		t.Fatalf("invalid opposite-lane activity was hidden from the wire: %s", raw)
 	}
 }
 
