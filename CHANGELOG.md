@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.68.18 (2026-08-15)
+
+### Bug Fixes
+
+- **platform**: Preserve scored agents during rescores
+  ([#830](https://github.com/ditto-assistant/ditto-subnet/pull/830),
+  [`79e3f9a`](https://github.com/ditto-assistant/ditto-subnet/commit/79e3f9a36210d30f2ca8047ab5a856de4431bbd5))
+
+
 ## v0.68.17 (2026-08-15)
 
 ### Bug Fixes
