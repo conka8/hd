@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.68.7 (2026-08-15)
+
+### Bug Fixes
+
+- **platform**: Retry pre-provider confirmation route misses
+  ([`26b57ef`](https://github.com/ditto-assistant/ditto-subnet/commit/26b57ef5f59bfa168f6a39604ebde2fd5f77b60b))
+
+
 ## v0.68.6 (2026-08-15)
 
 ### Bug Fixes
