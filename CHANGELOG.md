@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.68.14 (2026-08-15)
+
+### Bug Fixes
+
+- **release**: Stage relay artifacts through gcs
+  ([#820](https://github.com/ditto-assistant/ditto-subnet/pull/820),
+  [`dfd0424`](https://github.com/ditto-assistant/ditto-subnet/commit/dfd04242e674b6b908cc3640491e32ec1fe136c0))
+
+
 ## v0.68.13 (2026-08-15)
 
 ### Bug Fixes
