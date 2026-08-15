@@ -215,9 +215,12 @@ func (s *server) handleConfirmationExecute(w http.ResponseWriter, r *http.Reques
 	result, err := s.confirmation.Execute(ctx, request)
 	if err != nil {
 		stage := confirmationExecutionStage(err)
+		failureClass, failureStatus := confirmationExecutionDiagnostic(err)
 		log.Printf(
-			"confirmation execution failed: stage=%s bundle_id=%s agent_id=%s slot_id=%s",
+			"confirmation execution failed: stage=%s failure_class=%s failure_status=%d bundle_id=%s agent_id=%s slot_id=%s",
 			stage,
+			failureClass,
+			failureStatus,
 			request.BundleID,
 			request.AgentID,
 			request.SlotID,

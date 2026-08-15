@@ -351,6 +351,7 @@ func TestHTTPHarnessRejectsInvalidConstructionAndResponses(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			harness.seedRetryDelay = [seedMaxAttempts - 1]time.Duration{}
 			_, err = harness.Run(context.Background(), protocol.RunRequest{Tools: []protocol.ToolDefinition{}})
 			var failure *HarnessCaseFailure
 			if !errors.As(err, &failure) {
@@ -730,6 +731,76 @@ func TestHTTPHarnessRejectsIncompleteSeedAcknowledgement(t *testing.T) {
 	})
 	if err == nil || requests != 1 {
 		t.Fatalf("incomplete seed acknowledgement accepted or retried: requests=%d err=%v", requests, err)
+	}
+	diagnostic, ok := FailureDiagnostic(err)
+	if !ok || diagnostic != (HarnessFailureDiagnostic{Operation: "seed", Kind: "incomplete_ack"}) {
+		t.Fatalf("diagnostic = %#v, %v", diagnostic, ok)
+	}
+}
+
+func TestHTTPHarnessSeedFailureDiagnosticsAreBoundedAndBodyFree(t *testing.T) {
+	testCases := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantKind   string
+		wantStatus int
+	}{
+		{
+			name:       "received status",
+			statusCode: http.StatusUnprocessableEntity,
+			body:       `{"error":"private submitted detail and credential-material"}`,
+			wantKind:   "http_status",
+			wantStatus: http.StatusUnprocessableEntity,
+		},
+		{
+			name:       "malformed acknowledgement",
+			statusCode: http.StatusOK,
+			body:       `{"pairs":1,"private":"credential-material"`,
+			wantKind:   "malformed_json",
+			wantStatus: http.StatusOK,
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.WriteHeader(testCase.statusCode)
+				_, _ = writer.Write([]byte(testCase.body))
+			}))
+			defer server.Close()
+			harness, err := NewHTTPHarness(server.URL, server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = harness.Seed(context.Background(), protocol.SeedRequest{
+				UserID: uuid.NewString(), Pairs: []protocol.MemoryPair{},
+				Subjects: []protocol.Subject{}, Links: []protocol.SubjectLink{},
+			})
+			diagnostic, ok := FailureDiagnostic(err)
+			want := HarnessFailureDiagnostic{
+				Operation: "seed", Kind: testCase.wantKind, StatusCode: testCase.wantStatus,
+			}
+			if !ok || diagnostic != want {
+				t.Fatalf("diagnostic = %#v, %v; want %#v, true", diagnostic, ok, want)
+			}
+			for _, forbidden := range []string{"private", "credential-material"} {
+				if strings.Contains(err.Error(), forbidden) {
+					t.Fatalf("seed failure leaked %q: %v", forbidden, err)
+				}
+			}
+		})
+	}
+}
+
+func TestFailureDiagnosticRejectsNonAllowlistedFields(t *testing.T) {
+	testCases := []error{
+		&HarnessCaseFailure{Kind: "private submitted detail"},
+		&HarnessCaseFailure{Kind: "http_status", StatusCode: 999},
+	}
+	for _, operationErr := range testCases {
+		if diagnostic, ok := FailureDiagnostic(operationErr); ok {
+			t.Fatalf("non-allowlisted diagnostic accepted: %#v", diagnostic)
+		}
 	}
 }
 

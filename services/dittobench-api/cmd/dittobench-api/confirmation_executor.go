@@ -303,6 +303,14 @@ func confirmationExecutionStage(err error) string {
 	return "execution"
 }
 
+func confirmationExecutionDiagnostic(err error) (string, int) {
+	diagnostic, ok := longmemeval.FailureDiagnostic(err)
+	if !ok {
+		return "unclassified", 0
+	}
+	return "longmem_" + diagnostic.Operation + "_" + diagnostic.Kind, diagnostic.StatusCode
+}
+
 // confirmationRuntime contains no provider endpoints or credentials. Real
 // Judge, ProviderMeter, CaseRunner, dataset, and artifact lifecycle adapters
 // remain required injected bindings and are intentionally not implemented here.

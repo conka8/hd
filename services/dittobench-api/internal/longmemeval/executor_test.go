@@ -278,6 +278,12 @@ func TestExecutorRejectsUnjudgeableRunWithoutCaseLocalProviderReceipt(t *testing
 	if err == nil || !strings.Contains(err.Error(), "lacks complete provider receipts") {
 		t.Fatalf("zero-delta harness failure was scored as an incorrect case: result=%#v err=%v", result, err)
 	}
+	diagnostic, ok := FailureDiagnostic(err)
+	if !ok || diagnostic != (HarnessFailureDiagnostic{
+		Operation: "run", Kind: "http_status", StatusCode: http.StatusServiceUnavailable,
+	}) {
+		t.Fatalf("safe run failure diagnostic = %#v, %v", diagnostic, ok)
+	}
 	if !reflect.DeepEqual(result, ExecutionResult{}) || base.runs != 3 || len(judge.inputs) != 3 {
 		t.Fatalf("earlier successful cases masked zero-delta failure: result=%#v runs=%d judges=%d", result, base.runs, len(judge.inputs))
 	}
