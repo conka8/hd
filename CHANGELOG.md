@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.68.4 (2026-08-15)
+
+### Bug Fixes
+
+- **platform**: Retry LongMem confirmation backpressure
+  ([`d228272`](https://github.com/ditto-assistant/ditto-subnet/commit/d2282726cc1af3cd9c976d9a283cfdc6a2cdb87e))
+
+
 ## v0.68.3 (2026-08-15)
 
 ### Bug Fixes
