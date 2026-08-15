@@ -100,6 +100,38 @@ func NewEvidence(
 	score Score,
 	providerEvidence []ProviderEvidence,
 ) (Evidence, error) {
+	return newEvidence(profile, selection, artifactSHA256, latencyMS, score, providerEvidence, false)
+}
+
+// newAllReceivedFailuresEvidence is the only producer authorization for the
+// canonical zero-provider form. Verifiers can replay that signed form, but an
+// ordinary caller cannot manufacture it merely by passing zero rows to
+// NewEvidence. The executor supplies the count from its sealed, received
+// HarnessCaseFailure branch after every selected case has completed.
+func newAllReceivedFailuresEvidence(
+	profile Profile,
+	selection Selection,
+	artifactSHA256 string,
+	latencyMS uint64,
+	score Score,
+	providerEvidence []ProviderEvidence,
+	receivedFailures int,
+) (Evidence, error) {
+	if receivedFailures != len(selection.Cases) || !zeroScore(score) {
+		return Evidence{}, errors.New("zero-provider evidence requires every selected case to be a received harness failure")
+	}
+	return newEvidence(profile, selection, artifactSHA256, latencyMS, score, providerEvidence, true)
+}
+
+func newEvidence(
+	profile Profile,
+	selection Selection,
+	artifactSHA256 string,
+	latencyMS uint64,
+	score Score,
+	providerEvidence []ProviderEvidence,
+	allowZeroProviders bool,
+) (Evidence, error) {
 	profileChecksum, err := profile.Checksum()
 	if err != nil {
 		return Evidence{}, err
@@ -127,6 +159,7 @@ func NewEvidence(
 		return normalizedProviders[i].Lane < normalizedProviders[j].Lane
 	})
 	seen := make(map[string]struct{}, len(normalizedProviders))
+	zeroProviders := 0
 	for _, observed := range normalizedProviders {
 		policy, ok := policies[observed.Lane]
 		if !ok {
@@ -136,12 +169,22 @@ func NewEvidence(
 			return Evidence{}, fmt.Errorf("duplicate provider lane %q", observed.Lane)
 		}
 		seen[observed.Lane] = struct{}{}
-		if err := ValidateProviderEvidence(policy, observed); err != nil {
+		if zeroProviderCounters(observed) && observed.ReceiptSetSHA256 == "" {
+			if err := validateZeroProviderEvidence(policy, observed); err != nil {
+				return Evidence{}, err
+			}
+			zeroProviders++
+		} else if err := ValidateProviderEvidence(policy, observed); err != nil {
 			return Evidence{}, err
 		}
 	}
 	if len(seen) != len(policies) {
 		return Evidence{}, errors.New("provider evidence does not cover every frozen lane")
+	}
+	if zeroProviders != 0 {
+		if !allowZeroProviders || zeroProviders != len(normalizedProviders) || !zeroScore(score) {
+			return Evidence{}, errors.New("zero-provider evidence is allowed only for an attributed all-failure zero score")
+		}
 	}
 
 	return Evidence{
@@ -156,6 +199,33 @@ func NewEvidence(
 		Score:            score,
 		ProviderEvidence: normalizedProviders,
 	}, nil
+}
+
+func validateZeroProviderEvidence(policy ProviderPolicy, evidence ProviderEvidence) error {
+	if err := policy.validate(); err != nil {
+		return err
+	}
+	if evidence.Lane != policy.Lane || evidence.Provider != policy.Provider ||
+		evidence.ProfileRevision != policy.ProfileRevision || evidence.Model != policy.Model {
+		return fmt.Errorf("provider identity drift on lane %q", policy.Lane)
+	}
+	if evidence.FallbackUsed || evidence.CostSource != AuthoritativeCostV1 || evidence.Currency != "USD" ||
+		!zeroProviderCounters(evidence) || evidence.ReceiptSetSHA256 != "" {
+		return fmt.Errorf("lane %q is not canonical zero-provider evidence", policy.Lane)
+	}
+	return nil
+}
+
+func zeroScore(score Score) bool {
+	if score.LongMemMean != 0 || score.LongMemStdErr != 0 {
+		return false
+	}
+	for _, row := range score.PerCapability {
+		if row.Correct != 0 || row.Mean != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func validateScore(selection Selection, score Score) error {
@@ -209,8 +279,12 @@ func (e Evidence) normalized(profile Profile, selection Selection) (Evidence, er
 		math.IsNaN(e.Score.LongMemStdErr) || math.IsInf(e.Score.LongMemStdErr, 0) {
 		return Evidence{}, errors.New("evidence score contains a non-finite value")
 	}
-	validated, err := NewEvidence(
-		profile, selection, e.ArtifactSHA256, e.LatencyMS, e.Score, e.ProviderEvidence,
+	allowZeroProviders := len(e.ProviderEvidence) > 0
+	for _, row := range e.ProviderEvidence {
+		allowZeroProviders = allowZeroProviders && zeroProviderCounters(row) && row.ReceiptSetSHA256 == ""
+	}
+	validated, err := newEvidence(
+		profile, selection, e.ArtifactSHA256, e.LatencyMS, e.Score, e.ProviderEvidence, allowZeroProviders,
 	)
 	if err != nil {
 		return Evidence{}, err

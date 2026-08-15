@@ -6,12 +6,14 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -34,12 +36,34 @@ type fakeConfirmationSandbox struct {
 	availableErr error
 	buildErr     error
 	runErr       error
+	runHandle    *sandbox.Handle
+	stopErr      error
 	onRun        func()
 	builds       int
 	runs         int
 	stops        int
 	stopScoped   []bool
 	released     int
+	lastEnv      map[string]string
+	envHistory   []map[string]string
+}
+
+func assertDistinctSandboxCapabilities(t *testing.T, history []map[string]string, want int) {
+	t.Helper()
+	if len(history) != want {
+		t.Fatalf("sandbox capability history=%d want=%d", len(history), want)
+	}
+	seen := make(map[string]struct{}, len(history))
+	for index, env := range history {
+		capability := env["OPENROUTER_API_KEY"]
+		if !canonicalBrokerSourceCapability(capability) {
+			t.Fatalf("sandbox %d capability is not canonical: %q", index, capability)
+		}
+		if _, duplicate := seen[capability]; duplicate {
+			t.Fatalf("sandbox capability reused at index %d", index)
+		}
+		seen[capability] = struct{}{}
+	}
 }
 
 func TestConfirmationLongMemHarnessSealsOneRunGeneration(t *testing.T) {
@@ -48,9 +72,27 @@ func TestConfirmationLongMemHarnessSealsOneRunGeneration(t *testing.T) {
 	session := &brokerSession{
 		confirmationSession: true,
 		caseSnapshots:       make(map[uint64]brokerCaseSnapshot),
+		boundRunID:          "confirmation-run",
+		expiresAt:           time.Now().Add(time.Hour),
+		trustedChatHandler:  http.NotFoundHandler(),
 	}
 	broker.sessions[sessionID] = session
 	harnessServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/health" {
+			writer.WriteHeader(http.StatusOK)
+			return
+		}
+		if request.URL.Path == "/seed" {
+			var seed protocol.SeedRequest
+			if err := json.NewDecoder(request.Body).Decode(&seed); err != nil {
+				http.Error(writer, "bad seed", http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(writer).Encode(protocol.SeedResponse{
+				Pairs: len(seed.Pairs), Subjects: len(seed.Subjects), Links: len(seed.Links),
+			})
+			return
+		}
 		if request.URL.Path != "/run" {
 			http.NotFound(writer, request)
 			return
@@ -70,8 +112,17 @@ func TestConfirmationLongMemHarnessSealsOneRunGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	harness := &confirmationLongMemHarness{Harness: rawHarness, broker: broker, sessionID: sessionID}
-	_, err = harness.Run(context.Background(), protocol.RunRequest{})
+	_ = rawHarness
+	fake := &fakeConfirmationSandbox{harnessURL: harnessServer.URL, session: session}
+	harness := &confirmationLongMemHarness{
+		sandbox: fake, broker: broker, image: "screened-image", sessionID: sessionID,
+		runID: "confirmation-run", healthTimeout: time.Second,
+		binding: &confirmationSourceBinding{},
+	}
+	if _, err = harness.Seed(context.Background(), protocol.SeedRequest{UserID: "projected-user"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = harness.Run(context.Background(), protocol.RunRequest{UserID: "projected-user"})
 	diagnostic, ok := longmemeval.FailureDiagnostic(err)
 	if !ok || diagnostic != (longmemeval.HarnessFailureDiagnostic{
 		Operation: "run", Kind: "http_status", StatusCode: http.StatusInternalServerError,
@@ -101,19 +152,27 @@ func (fake *fakeConfirmationSandbox) Build(context.Context, sandbox.Source) (str
 	}
 	return "screened-image", "", nil, nil
 }
-func (fake *fakeConfirmationSandbox) Run(context.Context, string, map[string]string) (*sandbox.Handle, error) {
+func (fake *fakeConfirmationSandbox) Run(_ context.Context, _ string, env map[string]string) (*sandbox.Handle, error) {
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	fake.runs++
+	fake.lastEnv = make(map[string]string, len(env))
+	for key, value := range env {
+		fake.lastEnv[key] = value
+	}
+	fake.envHistory = append(fake.envHistory, fake.lastEnv)
 	if fake.runErr != nil {
-		return nil, fake.runErr
+		return fake.runHandle, fake.runErr
 	}
 	if fake.onRun != nil {
 		fake.onRun()
 	}
+	if fake.runHandle != nil {
+		return fake.runHandle, nil
+	}
 	return &sandbox.Handle{
 		ContainerID: fmt.Sprintf("container-%d", fake.runs), BaseURL: fake.harnessURL,
-		SourceIP: "127.0.0.1", ImageRef: "screened-image",
+		SourceIP: "127.0.0.1", ImageRef: "screened-image", NetworkName: fmt.Sprintf("ditto-job-%d", fake.runs),
 	}, nil
 }
 func (fake *fakeConfirmationSandbox) Release(context.Context, string) {
@@ -132,6 +191,229 @@ func (fake *fakeConfirmationSandbox) Stop(context.Context, *sandbox.Handle) {
 	fake.stops++
 	fake.stopScoped = append(fake.stopScoped, scoped)
 	fake.mu.Unlock()
+}
+func (fake *fakeConfirmationSandbox) StopRetainingImage(ctx context.Context, handle *sandbox.Handle) error {
+	fake.Stop(ctx, handle)
+	return fake.stopErr
+}
+
+func TestConfirmationLongMemHarnessRejectsUserDriftAndStopFailurePreventsNextCase(t *testing.T) {
+	broker := newInferenceBroker(1, 1)
+	sessionID, runID := "confirmation-longmem-isolation", "confirmation-run"
+	session := &brokerSession{
+		confirmationSession: true, caseSnapshots: make(map[uint64]brokerCaseSnapshot),
+		boundRunID: runID, expiresAt: time.Now().Add(time.Hour), trustedChatHandler: http.NotFoundHandler(),
+	}
+	broker.sessions[sessionID] = session
+	harnessServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/health":
+			writer.WriteHeader(http.StatusOK)
+		case "/seed":
+			var seed protocol.SeedRequest
+			if json.NewDecoder(request.Body).Decode(&seed) != nil {
+				http.Error(writer, "bad seed", http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(writer).Encode(protocol.SeedResponse{Pairs: len(seed.Pairs)})
+		case "/run":
+			http.Error(writer, "private", http.StatusInternalServerError)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer harnessServer.Close()
+	fake := &fakeConfirmationSandbox{harnessURL: harnessServer.URL, session: session}
+	harness := &confirmationLongMemHarness{
+		sandbox: fake, broker: broker, image: "screened-image", sessionID: sessionID, runID: runID,
+		healthTimeout: time.Second, binding: &confirmationSourceBinding{},
+	}
+	if _, err := harness.Seed(context.Background(), protocol.SeedRequest{UserID: "user-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := harness.Seed(context.Background(), protocol.SeedRequest{UserID: "user-b"}); err == nil {
+		t.Fatal("mismatched seed user was accepted")
+	}
+	if _, err := harness.Run(context.Background(), protocol.RunRequest{UserID: "user-b"}); err == nil {
+		t.Fatal("mismatched run user was accepted")
+	}
+	fake.stopErr = errors.New("stop not verified")
+	if _, err := harness.Run(context.Background(), protocol.RunRequest{UserID: "user-a"}); err == nil ||
+		!strings.Contains(err.Error(), "isolation") {
+		t.Fatalf("stop failure = %v", err)
+	}
+	if _, err := harness.Seed(context.Background(), protocol.SeedRequest{UserID: "user-c"}); err == nil {
+		t.Fatal("new case started after unverified stop")
+	}
+	fake.mu.Lock()
+	runs, stops := fake.runs, fake.stops
+	fake.mu.Unlock()
+	if runs != 1 || stops != 1 {
+		t.Fatalf("sandbox lifecycle after stop failure runs=%d stops=%d", runs, stops)
+	}
+	session.mu.Lock()
+	capabilityRequired := session.sourceCapabilityRequired
+	capabilityActive := session.sourceCapabilityActive
+	boundSource := session.expectedSourceIP
+	activeGeneration := session.activeCaseGeneration
+	session.mu.Unlock()
+	if !capabilityRequired || capabilityActive || boundSource == "" || activeGeneration == 0 {
+		t.Fatalf(
+			"failed isolation cleanup required=%v active=%v source=%q generation=%d",
+			capabilityRequired, capabilityActive, boundSource, activeGeneration,
+		)
+	}
+	if broker.bindSource(sessionID, runID, boundSource) {
+		t.Fatal("revoked capability session reopened legacy source-only admission")
+	}
+
+	// A failed strict stop must leave enough lifecycle identity for Close to
+	// retry removal. Revocation is intentionally idempotent; it must not rotate
+	// or reactivate the capability while cleanup is retried.
+	fake.stopErr = nil
+	harness.Close()
+	fake.mu.Lock()
+	runs, stops = fake.runs, fake.stops
+	fake.mu.Unlock()
+	if runs != 1 || stops != 2 {
+		t.Fatalf("sandbox lifecycle after close retry runs=%d stops=%d", runs, stops)
+	}
+	session.mu.Lock()
+	capabilityRequired = session.sourceCapabilityRequired
+	capabilityActive = session.sourceCapabilityActive
+	boundSource = session.expectedSourceIP
+	activeGeneration = session.activeCaseGeneration
+	session.mu.Unlock()
+	if !capabilityRequired || capabilityActive || boundSource != "" || activeGeneration != 0 {
+		t.Fatalf(
+			"close retry cleanup required=%v active=%v source=%q generation=%d",
+			capabilityRequired, capabilityActive, boundSource, activeGeneration,
+		)
+	}
+	if harness.current != nil || harness.harness != nil || harness.generation != 0 ||
+		harness.binding.sourceIP != "" || harness.binding.capability != "" {
+		t.Fatalf("close retry retained runtime identity: harness=%+v binding=%+v", harness, harness.binding)
+	}
+}
+
+func TestConfirmationLongMemHarnessRetainsPartialStartForCloseRetry(t *testing.T) {
+	broker := newInferenceBroker(1, 1)
+	sessionID, runID := "confirmation-longmem-partial-start", "confirmation-run"
+	session := &brokerSession{
+		confirmationSession: true, caseSnapshots: make(map[uint64]brokerCaseSnapshot),
+		boundRunID: runID, expiresAt: time.Now().Add(time.Hour), trustedChatHandler: http.NotFoundHandler(),
+	}
+	broker.sessions[sessionID] = session
+	fake := &fakeConfirmationSandbox{
+		runErr: errors.New("runtime returned a partial handle"),
+		runHandle: &sandbox.Handle{
+			ContainerID: "partial-container", BaseURL: "http://127.0.0.1:1",
+			SourceIP: "127.0.0.1", ImageRef: "screened-image", NetworkName: "ditto-partial",
+		},
+		stopErr: errors.New("strict removal not yet verified"),
+		session: session,
+	}
+	harness := &confirmationLongMemHarness{
+		sandbox: fake, broker: broker, image: "screened-image", sessionID: sessionID, runID: runID,
+		healthTimeout: time.Second, binding: &confirmationSourceBinding{},
+	}
+	if _, err := harness.Seed(context.Background(), protocol.SeedRequest{UserID: "projected-user"}); err == nil ||
+		!strings.Contains(err.Error(), "isolation") {
+		t.Fatalf("partial start error=%v", err)
+	}
+	if harness.current == nil || harness.generation == 0 || harness.currentCapability != "" {
+		t.Fatalf("partial lifecycle was discarded: current=%v generation=%d capability=%q", harness.current, harness.generation, harness.currentCapability)
+	}
+	session.mu.Lock()
+	activeCapability, source, generation := session.sourceCapabilityActive, session.expectedSourceIP, session.activeCaseGeneration
+	session.mu.Unlock()
+	if activeCapability || source != "" || generation == 0 {
+		t.Fatalf("partial start remained admissible: active=%v source=%q generation=%d", activeCapability, source, generation)
+	}
+	fake.stopErr = nil
+	if err := harness.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if harness.current != nil || harness.generation != 0 {
+		t.Fatalf("close retry retained partial lifecycle: current=%v generation=%d", harness.current, harness.generation)
+	}
+	fake.mu.Lock()
+	stops := fake.stops
+	fake.mu.Unlock()
+	if stops != 2 {
+		t.Fatalf("partial start strict stop attempts=%d", stops)
+	}
+}
+
+func TestConfirmationLongMemHarnessUsesFreshProcessAndEpochForEveryCase(t *testing.T) {
+	broker := newInferenceBroker(1, 1)
+	sessionID, runID := "confirmation-longmem-fresh-cases", "confirmation-run"
+	session := &brokerSession{
+		confirmationSession: true, caseSnapshots: make(map[uint64]brokerCaseSnapshot),
+		boundRunID: runID, expiresAt: time.Now().Add(time.Hour), trustedChatHandler: http.NotFoundHandler(),
+	}
+	broker.sessions[sessionID] = session
+	var seedUsers, runUsers []string
+	harnessServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/health":
+			writer.WriteHeader(http.StatusOK)
+		case "/seed":
+			var seed protocol.SeedRequest
+			if err := json.NewDecoder(request.Body).Decode(&seed); err != nil {
+				http.Error(writer, "bad seed", http.StatusBadRequest)
+				return
+			}
+			seedUsers = append(seedUsers, seed.UserID)
+			_ = json.NewEncoder(writer).Encode(protocol.SeedResponse{Pairs: len(seed.Pairs)})
+		case "/run":
+			var run protocol.RunRequest
+			if err := json.NewDecoder(request.Body).Decode(&run); err != nil {
+				http.Error(writer, "bad run", http.StatusBadRequest)
+				return
+			}
+			runUsers = append(runUsers, run.UserID)
+			_ = json.NewEncoder(writer).Encode(protocol.RunResponse{FinalText: "ok"})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer harnessServer.Close()
+	fake := &fakeConfirmationSandbox{harnessURL: harnessServer.URL, session: session}
+	binding := &confirmationSourceBinding{}
+	harness := &confirmationLongMemHarness{
+		sandbox: fake, broker: broker, image: "screened-image", sessionID: sessionID, runID: runID,
+		healthTimeout: time.Second, binding: binding,
+	}
+	for _, userID := range []string{"projected-user-a", "projected-user-b"} {
+		if _, err := harness.Seed(context.Background(), protocol.SeedRequest{UserID: userID}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := harness.Seed(context.Background(), protocol.SeedRequest{UserID: userID}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := harness.Run(context.Background(), protocol.RunRequest{UserID: userID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !reflect.DeepEqual(seedUsers, []string{"projected-user-a", "projected-user-a", "projected-user-b", "projected-user-b"}) ||
+		!reflect.DeepEqual(runUsers, []string{"projected-user-a", "projected-user-b"}) {
+		t.Fatalf("projected lifecycle seed=%v run=%v", seedUsers, runUsers)
+	}
+	fake.mu.Lock()
+	runs, stops, releases := fake.runs, fake.stops, fake.released
+	envHistory := append([]map[string]string(nil), fake.envHistory...)
+	fake.mu.Unlock()
+	if runs != 2 || stops != 2 || releases != 0 {
+		t.Fatalf("sandbox lifecycle runs=%d stops=%d releases=%d", runs, stops, releases)
+	}
+	assertDistinctSandboxCapabilities(t, envHistory, 2)
+	session.mu.Lock()
+	active, epoch, source := session.activeCaseGeneration, session.sourceEpoch, session.expectedSourceIP
+	session.mu.Unlock()
+	if active != 0 || epoch != 6 || source != "" || binding.sourceIP != "" {
+		t.Fatalf("case boundary active=%d epoch=%d session_source=%q binding_source=%q", active, epoch, source, binding.sourceIP)
+	}
 }
 func (*fakeConfirmationSandbox) Diagnostics(context.Context, *sandbox.Handle) sandbox.RuntimeDiagnostics {
 	return sandbox.RuntimeDiagnostics{}
@@ -172,7 +454,7 @@ func TestScreenedAblationCaseRunnerUsesFreshScopedContainersAndZeroInterventionU
 	deadline := time.Now().Add(time.Hour)
 	session := &brokerSession{
 		id: sessionID, privateKey: privateKey, legacyGateway: provider.URL, expiresAt: deadline,
-		expectedSourceIP: "127.0.0.1", provider: "test", model: model, requestModel: model,
+		provider: "test", model: model, requestModel: model,
 		profileRevision: "test", boundRunID: runID, benchVersion: confirmationBenchVersion,
 		confirmationSession: true, confirmationGrants: map[string]brokerConfirmationGrant{
 			"embedding": {
@@ -192,6 +474,7 @@ func TestScreenedAblationCaseRunnerUsesFreshScopedContainersAndZeroInterventionU
 	mux.HandleFunc("POST /api/embed", broker.handleEmbedding)
 	brokerServer := httptest.NewServer(mux)
 	defer brokerServer.Close()
+	var fake *fakeConfirmationSandbox
 	harness := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/health":
@@ -203,8 +486,15 @@ func TestScreenedAblationCaseRunnerUsesFreshScopedContainersAndZeroInterventionU
 			}
 			_ = json.NewEncoder(writer).Encode(protocol.SeedResponse{Pairs: len(seed.Pairs), Subjects: len(seed.Subjects), Links: len(seed.Links)})
 		case "/run":
-			embedResponse, err := http.Post(brokerServer.URL+"/api/embed", "application/json", strings.NewReader(
+			fake.mu.Lock()
+			capability := fake.lastEnv["OPENROUTER_API_KEY"]
+			capabilityHost, _ := brokerSourceCapabilityHost(capability)
+			fake.mu.Unlock()
+			embedRequest, _ := http.NewRequest(http.MethodPost, brokerServer.URL+"/api/embed", strings.NewReader(
 				`{"model":"embeddinggemma","input":["frozen selected content"]}`))
+			embedRequest.Header.Set("Content-Type", "application/json")
+			embedRequest.Host = capabilityHost
+			embedResponse, err := http.DefaultClient.Do(embedRequest)
 			if err != nil {
 				t.Errorf("embedding request: %v", err)
 				writer.WriteHeader(http.StatusInternalServerError)
@@ -215,8 +505,11 @@ func TestScreenedAblationCaseRunnerUsesFreshScopedContainersAndZeroInterventionU
 			if embedResponse.StatusCode != http.StatusOK {
 				t.Errorf("embedding status = %d", embedResponse.StatusCode)
 			}
-			chatResponse, err := http.Post(brokerServer.URL+"/v1/inference/chat/completions", "application/json", strings.NewReader(
+			chatRequest, _ := http.NewRequest(http.MethodPost, brokerServer.URL+"/v1/inference/chat/completions", strings.NewReader(
 				`{"model":"`+model+`","messages":[{"role":"user","content":"frozen selected content"}]}`))
+			chatRequest.Header.Set("Content-Type", "application/json")
+			chatRequest.Host = capabilityHost
+			chatResponse, err := http.DefaultClient.Do(chatRequest)
 			if err != nil {
 				t.Errorf("chat request: %v", err)
 				writer.WriteHeader(http.StatusInternalServerError)
@@ -245,7 +538,7 @@ func TestScreenedAblationCaseRunnerUsesFreshScopedContainersAndZeroInterventionU
 	}))
 	defer harness.Close()
 
-	fake := &fakeConfirmationSandbox{harnessURL: harness.URL, session: session}
+	fake = &fakeConfirmationSandbox{harnessURL: harness.URL, session: session}
 	dataset := confirmationAblationDataset{
 		SchemaVersion: 1, Revision: "ablation-fixture-v1",
 		Cases: []confirmationAblationCase{{
@@ -261,8 +554,7 @@ func TestScreenedAblationCaseRunnerUsesFreshScopedContainersAndZeroInterventionU
 	runnerAdapter := &screenedAblationCaseRunner{
 		sandbox: fake, broker: broker, image: "screened-image", sessionID: sessionID, runID: runID,
 		healthTimeout: time.Second, dataset: dataset,
-		current:       &sandbox.Handle{ContainerID: "stable-longmem", BaseURL: harness.URL, SourceIP: "127.0.0.1"},
-		boundSourceIP: "127.0.0.1",
+		binding: &confirmationSourceBinding{},
 	}
 	ordinary, err := runnerAdapter.RunCase(context.Background(), ablation.RunRequest{
 		Lane: ablation.LaneOrdinary, CaseID: "case-a", OpaqueUserNamespace: "ordinary-namespace",
@@ -308,9 +600,69 @@ func TestScreenedAblationCaseRunnerUsesFreshScopedContainersAndZeroInterventionU
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if fake.runs != 3 || fake.stops != 4 || len(fake.stopScoped) != 4 ||
-		fake.stopScoped[0] || !fake.stopScoped[1] || !fake.stopScoped[2] || !fake.stopScoped[3] {
+	if fake.runs != 3 || fake.stops != 3 || len(fake.stopScoped) != 3 ||
+		!fake.stopScoped[0] || !fake.stopScoped[1] || !fake.stopScoped[2] {
 		t.Fatalf("sandbox lifecycle runs=%d stops=%d scoped=%v", fake.runs, fake.stops, fake.stopScoped)
+	}
+	assertDistinctSandboxCapabilities(t, fake.envHistory, 3)
+}
+
+func TestScreenedAblationRunnerRetainsPartialStartForCleanupRetry(t *testing.T) {
+	broker := newInferenceBroker(1, 1)
+	sessionID, runID := "confirmation-ablation-partial-start", "confirmation-run"
+	session := &brokerSession{
+		confirmationSession: true, benchVersion: confirmationBenchVersion,
+		boundRunID: runID, expiresAt: time.Now().Add(time.Hour), legacyGateway: "active",
+	}
+	broker.sessions[sessionID] = session
+	fake := &fakeConfirmationSandbox{
+		runErr: errors.New("runtime returned a partial handle"),
+		runHandle: &sandbox.Handle{
+			ContainerID: "partial-ablation", BaseURL: "http://127.0.0.1:1",
+			SourceIP: "127.0.0.1", ImageRef: "screened-image", NetworkName: "ditto-partial",
+		},
+		stopErr: errors.New("strict removal not yet verified"),
+		session: session,
+	}
+	item := confirmationAblationCase{CaseID: "case-a", UserID: "population-user-a"}
+	runnerAdapter := &screenedAblationCaseRunner{
+		sandbox: fake, broker: broker, image: "screened-image", sessionID: sessionID, runID: runID,
+		healthTimeout: time.Second,
+		dataset: confirmationAblationDataset{
+			Cases: []confirmationAblationCase{item}, byID: map[string]confirmationAblationCase{"case-a": item},
+		},
+		binding: &confirmationSourceBinding{},
+	}
+	if _, err := runnerAdapter.RunCase(context.Background(), ablation.RunRequest{
+		Lane: ablation.LaneOrdinary, CaseID: "case-a", OpaqueUserNamespace: "ordinary-namespace",
+	}); err == nil || !strings.Contains(err.Error(), "isolation") {
+		t.Fatalf("partial start error=%v", err)
+	}
+	if runnerAdapter.current == nil || runnerAdapter.currentLease == nil || runnerAdapter.currentCapability != "" || !runnerAdapter.closed {
+		t.Fatalf(
+			"partial ablation lifecycle discarded current=%v lease=%v capability=%q closed=%v",
+			runnerAdapter.current, runnerAdapter.currentLease, runnerAdapter.currentCapability, runnerAdapter.closed,
+		)
+	}
+	session.mu.Lock()
+	activeCapability, source, scope := session.sourceCapabilityActive, session.expectedSourceIP, session.ablation
+	session.mu.Unlock()
+	if activeCapability || source != "" || scope == nil || !scope.draining {
+		t.Fatalf("partial ablation remained admissible: active=%v source=%q scope=%+v", activeCapability, source, scope)
+	}
+	fake.stopErr = nil
+	if err := runnerAdapter.stopCurrentLocked(); err != nil {
+		t.Fatal(err)
+	}
+	if runnerAdapter.current != nil || runnerAdapter.currentLease != nil || runnerAdapter.currentCapability != "" {
+		t.Fatalf("cleanup retry retained partial ablation lifecycle: %+v", runnerAdapter)
+	}
+	session.mu.Lock()
+	activeCapability, source, scope = session.sourceCapabilityActive, session.expectedSourceIP, session.ablation
+	required := session.sourceCapabilityRequired
+	session.mu.Unlock()
+	if !required || activeCapability || source != "" || scope != nil {
+		t.Fatalf("cleanup retry state required=%v active=%v source=%q scope=%+v", required, activeCapability, source, scope)
 	}
 }
 
@@ -705,6 +1057,16 @@ func TestConfirmationFactoryAcquireAndCloseOwnEveryResource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	fixture.sandbox.mu.Lock()
+	preflightHistory := append([]map[string]string(nil), fixture.sandbox.envHistory...)
+	fixture.sandbox.mu.Unlock()
+	assertDistinctSandboxCapabilities(t, preflightHistory, 1)
+	fixture.factory.broker.sessions[fixture.identity.InferenceSessionID].mu.Lock()
+	preflightRequired := fixture.factory.broker.sessions[fixture.identity.InferenceSessionID].sourceCapabilityRequired
+	fixture.factory.broker.sessions[fixture.identity.InferenceSessionID].mu.Unlock()
+	if preflightRequired {
+		t.Fatal("health-only preflight capability was installed into broker")
+	}
 	longMemKey, selectionKey, projectionKey := runtime.LongMemProjectionKey, runtime.AblationSelectionKey, runtime.AblationProjectionKey
 	if err := runtime.Close(); err != nil {
 		t.Fatal(err)
@@ -817,8 +1179,8 @@ func TestConfirmationFactoryFailsBeforeSpendAndCleansEveryPartialLifecycle(t *te
 		if err == nil || runtime != nil {
 			t.Fatal("missing broker binding accepted")
 		}
-		if got := confirmationExecutionStage(err); got != "source_binding" {
-			t.Fatalf("failure stage = %q, want source_binding; err=%v", got, err)
+		if got := confirmationExecutionStage(err); got != "embedding_phase" {
+			t.Fatalf("failure stage = %q, want embedding_phase; err=%v", got, err)
 		}
 		if fixture.sandbox.stops != 1 || fixture.sandbox.released != 1 {
 			t.Fatal("bind failure cleanup incomplete")

@@ -347,6 +347,48 @@ func TestRunArgs_EgressProxyInjectsEnv(t *testing.T) {
 	}
 }
 
+func TestRunArgs_BrokerCapabilityHostUsesGatewayAndBypassesProxy(t *testing.T) {
+	d := NewLocalDocker()
+	d.RequireRootless = true
+	d.HostGatewayIP = "192.0.2.44"
+	d.EgressProxy = "http://egress:3128"
+	host := "c-" + strings.Repeat("a", 52) + brokerCapabilityHostSuffix
+	args := d.runArgs("img", map[string]string{
+		"DITTOBENCH_INFERENCE_BASE_URL": "http://" + host + ":11436/v1/inference",
+		"OLLAMA_BASE_URL":               "http://" + host + ":11436",
+	})
+	if !hasFlagPair(args, "--add-host", host+":192.0.2.44") {
+		t.Fatalf("broker capability host did not resolve to the trusted gateway: %v", args)
+	}
+	if !hasFlagPair(args, "-e", "NO_PROXY=host.docker.internal,localhost,127.0.0.1,"+host) {
+		t.Fatalf("broker capability host did not bypass the egress proxy: %v", args)
+	}
+}
+
+func TestBrokerCapabilityHostFromEnvRejectsDrift(t *testing.T) {
+	host := "c-" + strings.Repeat("a", 52) + brokerCapabilityHostSuffix
+	for name, env := range map[string]map[string]string{
+		"mismatched": {
+			"DITTOBENCH_INFERENCE_BASE_URL": "http://" + host + ":11436/v1/inference",
+			"OLLAMA_BASE_URL":               "http://c-" + strings.Repeat("b", 52) + brokerCapabilityHostSuffix + ":11436",
+		},
+		"invalid alphabet": {
+			"DITTOBENCH_INFERENCE_BASE_URL": "http://c-" + strings.Repeat("0", 52) + brokerCapabilityHostSuffix + ":11436/v1/inference",
+			"OLLAMA_BASE_URL":               "http://c-" + strings.Repeat("0", 52) + brokerCapabilityHostSuffix + ":11436",
+		},
+		"partial": {
+			"DITTOBENCH_INFERENCE_BASE_URL": "http://" + host + ":11436/v1/inference",
+			"OLLAMA_BASE_URL":               "http://host.docker.internal:11436",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := brokerCapabilityHostFromEnv(env); err == nil {
+				t.Fatal("invalid broker capability host was accepted")
+			}
+		})
+	}
+}
+
 func TestRunArgs_OpenRouterShimUsesHostGatewayAndPublicCABundle(t *testing.T) {
 	d := NewLocalDocker()
 	d.RequireRootless = true
@@ -489,6 +531,32 @@ func TestLogsRedactInjectedCredentialsAndPresignedQueries(t *testing.T) {
 	if !strings.Contains(out, "https://storage.example/artifact.tar?<redacted>") ||
 		!strings.Contains(out, "failed") {
 		t.Fatalf("redaction destroyed diagnostic context: %q", out)
+	}
+}
+
+func TestLogsRedactBrokerCapabilityInsideHostname(t *testing.T) {
+	const capability = "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst"
+	if len(capability) != 52 {
+		t.Fatal("test capability must retain the production wire length")
+	}
+	host := "c-" + capability + brokerCapabilityHostSuffix
+	d := NewLocalDocker()
+	d.dockerCommand = func(_ context.Context, _ ...string) ([]byte, error) {
+		return []byte("OPENAI_API_KEY=" + capability + " gateway=http://" + host + ":11436/v1/inference"), nil
+	}
+	handle := &Handle{
+		ContainerID: "c1",
+		injectedSecrets: credentialEnvValues(map[string]string{
+			"OPENAI_API_KEY": capability,
+		}),
+	}
+
+	out := d.Logs(context.Background(), handle)
+	if strings.Contains(out, capability) || strings.Contains(out, host) {
+		t.Fatalf("broker capability survived redaction: %q", out)
+	}
+	if !strings.Contains(out, "<redacted>") {
+		t.Fatalf("broker capability was removed without a redaction marker: %q", out)
 	}
 }
 

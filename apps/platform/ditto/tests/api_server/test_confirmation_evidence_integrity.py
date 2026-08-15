@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Literal, TypedDict, cast
 from uuid import UUID, uuid4
 
@@ -20,6 +22,7 @@ from ditto.api_server.confirmation_evidence import (
     ConfirmationVerificationProfile,
     ProviderLanePolicy,
     SyntheticBudgetPolicy,
+    _validate_longmem,
     compute_subject_projection,
     confirmation_signing_message,
     evidence_digest,
@@ -32,6 +35,7 @@ from ditto.tests.confirmation_evidence_fixtures import (
     unsigned_report,
     verification_profile,
 )
+from ditto_screening_protocol.confirmation_wire import longmem_envelope_from_go
 
 _SETTINGS_SHA256 = "9" * 64
 
@@ -234,6 +238,51 @@ class TestFrozenProfile:
 
 
 class TestLongMemReplay:
+    def test_platform_accepts_real_go_official_zero_without_synthetic_receipts(
+        self,
+    ) -> None:
+        path = (
+            Path(__file__).resolve().parents[5]
+            / "services"
+            / "dittobench-api"
+            / "internal"
+            / "longmemeval"
+            / "testdata"
+            / "go_longmem_official_zero_v2.json"
+        )
+        envelope = longmem_envelope_from_go(json.loads(path.read_text()))
+        base = verification_profile()
+        lanes = tuple(
+            sorted(envelope.evidence.provider_evidence, key=lambda row: row.lane)
+        )
+        policies = tuple(sorted(base.provider_lanes, key=lambda row: row.lane))
+        profile = replace(
+            base,
+            longmem_profile_checksum=envelope.evidence.profile_checksum,
+            longmem_dataset_revision=envelope.evidence.dataset_revision,
+            longmem_dataset_sha256=envelope.evidence.dataset_sha256,
+            provider_lanes=tuple(
+                replace(
+                    policy,
+                    provider=row.provider,
+                    profile_revision=row.profile_revision,
+                    model=row.model,
+                )
+                for row, policy in zip(lanes, policies, strict=True)
+            ),
+        )
+
+        verified = _validate_longmem(
+            envelope,
+            artifact_sha256=envelope.evidence.artifact_sha256,
+            profile=profile,
+        )
+        assert verified.request_count == 0
+        assert verified.provider_cost_microusd == 0
+        assert all(
+            row.receipt_set_sha256 == "" for row in verified.evidence.provider_evidence
+        )
+
     def test_preserves_distinct_provider_lanes_and_derived_totals(self) -> None:
         verified = rebuild()
         evidence = verified.root.longmemeval.evidence

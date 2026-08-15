@@ -400,6 +400,36 @@ func TestExecutorKeepsAllUnjudgeableRunsFailClosedAtEvidenceBoundary(t *testing.
 	}
 }
 
+func TestExecutorProducesOfficialZeroOnlyForAllReceivedEmbeddingBackedFailures(t *testing.T) {
+	profile, raw, _ := runtimeFixture(t)
+	meter := newRecordingMeter(profile)
+	base := newStarterHarness(nil)
+	harness := &allEmbeddingFailureHarness{Harness: base}
+	judge := &exactJudge{meter: meter}
+	executor := Executor{Harness: harness, Judge: judge, Meter: meter, Limits: ExecutionLimits{MaxElapsed: time.Second, SeedBatchPairs: 64}}
+	result, err := executor.Execute(context.Background(), bytes.NewReader(raw), profile, artifactDigestA, fixtureProjectionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Evidence.Score.CaseCount != 12 || !zeroScore(result.Evidence.Score) || len(judge.inputs) != 0 {
+		t.Fatalf("official zero score=%#v judges=%d", result.Evidence.Score, len(judge.inputs))
+	}
+	for _, row := range result.Evidence.ProviderEvidence {
+		if !zeroProviderCounters(row) || row.ReceiptSetSHA256 != "" {
+			t.Fatalf("nonzero provider row: %#v", row)
+		}
+	}
+	if err := result.Validate(profile); err != nil {
+		t.Fatalf("official zero did not replay: %v", err)
+	}
+	if _, err := NewEvidence(
+		profile, result.selection, artifactDigestA, result.Evidence.LatencyMS,
+		result.Evidence.Score, result.Evidence.ProviderEvidence,
+	); err == nil {
+		t.Fatal("ordinary evidence constructor accepted zero-provider producer input")
+	}
+}
+
 func TestExecutorKeepsSeedAndNonResponseRunFailuresFailClosed(t *testing.T) {
 	for _, testCase := range []struct {
 		name      string
@@ -643,6 +673,15 @@ func (h *allRunFailureHarness) Run(ctx context.Context, request protocol.RunRequ
 	return protocol.RunResponse{}, BindTrustedCaseInferenceActivity(
 		&HarnessCaseFailure{Kind: "http_status", StatusCode: http.StatusServiceUnavailable, received: true},
 		TrustedCaseInferenceActivity{ReaderAttempts: 1, ReaderDispatches: 1, ReaderReceipted: 1},
+	)
+}
+
+type allEmbeddingFailureHarness struct{ Harness }
+
+func (h *allEmbeddingFailureHarness) Run(context.Context, protocol.RunRequest) (protocol.RunResponse, error) {
+	return protocol.RunResponse{}, BindTrustedCaseInferenceActivity(
+		&HarnessCaseFailure{Kind: "http_status", StatusCode: http.StatusInternalServerError, received: true},
+		TrustedCaseInferenceActivity{EmbeddingAttempts: 1, EmbeddingDispatches: 1, EmbeddingDelivered: 1},
 	)
 }
 

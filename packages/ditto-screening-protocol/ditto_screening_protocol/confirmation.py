@@ -17,6 +17,10 @@ Sha256 = Annotated[
     str,
     StringConstraints(pattern=r"^[0-9a-f]{64}$", min_length=64, max_length=64),
 ]
+ReceiptSetDigest = Annotated[
+    str,
+    StringConstraints(pattern=r"^(?:|[0-9a-f]{64})$", max_length=64),
+]
 
 ScoreMicros = Annotated[int, Field(ge=0, le=1_000_000)]
 FactorBPS = Annotated[int, Field(ge=0, le=10_000)]
@@ -71,17 +75,35 @@ class LongMemProviderLaneEvidence(BaseModel):
     profile_revision: Annotated[str, Field(min_length=1, max_length=128)]
     model: Annotated[str, Field(min_length=1, max_length=256)]
     fallback_used: Literal[False]
-    requests: PositiveUsageCount
-    successes: PositiveUsageCount
-    receipted_requests: PositiveUsageCount
+    requests: UsageCount
+    successes: UsageCount
+    receipted_requests: UsageCount
     prompt_tokens: UsageCount
     completion_tokens: UsageCount
     total_tokens: UsageCount
     cost_usd_micros: UsageCount
-    receipt_set_sha256: Sha256
+    receipt_set_sha256: ReceiptSetDigest
 
     @model_validator(mode="after")
     def _validate_accounting(self) -> LongMemProviderLaneEvidence:
+        if self.requests == 0:
+            if (
+                self.successes != 0
+                or self.receipted_requests != 0
+                or self.prompt_tokens != 0
+                or self.completion_tokens != 0
+                or self.total_tokens != 0
+                or self.cost_usd_micros != 0
+                or self.receipt_set_sha256 != ""
+            ):
+                raise ValueError("zero provider lane must have exact zero accounting")
+            return self
+        if self.successes == 0 or self.receipted_requests == 0:
+            raise ValueError(
+                "positive provider lane must have successful receipted requests"
+            )
+        if len(self.receipt_set_sha256) != 64:
+            raise ValueError("positive provider lane must have a receipt digest")
         if self.successes > self.requests:
             raise ValueError("successes cannot exceed requests")
         if self.receipted_requests != self.requests:
@@ -114,6 +136,27 @@ class LongMemEvidence(BaseModel):
     dataset_sha256: Sha256
     score: LongMemScoreEvidence
     provider_evidence: list[LongMemProviderLaneEvidence]
+
+    @model_validator(mode="after")
+    def _validate_zero_provider_form(self) -> LongMemEvidence:
+        zero_rows = [row.requests == 0 for row in self.provider_evidence]
+        if any(zero_rows):
+            if not all(zero_rows):
+                raise ValueError(
+                    "LongMem provider lanes cannot mix zero and positive evidence"
+                )
+            if (
+                self.score.longmem_mean_micros != 0
+                or self.score.longmem_stderr_micros != 0
+                or any(
+                    row.correct != 0 or row.mean_micros != 0
+                    for row in self.score.per_capability
+                )
+            ):
+                raise ValueError(
+                    "zero-provider LongMem evidence requires an exact zero score"
+                )
+        return self
 
 
 class AblationBudget(BaseModel):

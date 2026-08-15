@@ -2471,6 +2471,7 @@ jobs:
     needs:
       - plan
       - release
+      - deploy_platform
       - assemble-stack
       - smoke-stack-runtime-amd64
       - smoke-validator-arm64
@@ -2481,6 +2482,8 @@ jobs:
       needs.release.result == 'success' &&
       needs.release.outputs.released == 'true' &&
       needs.plan.outputs.validator_stack == 'true' &&
+      ((needs.plan.outputs.platform == 'true' && needs.deploy_platform.result == 'success') ||
+       (needs.plan.outputs.platform != 'true' && needs.deploy_platform.result == 'skipped')) &&
       needs.assemble-stack.result == 'success' &&
       needs.smoke-stack-runtime-amd64.result == 'success' &&
       needs.smoke-validator-arm64.result == 'success' &&

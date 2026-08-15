@@ -80,6 +80,13 @@ func TestV10CaseCapabilitiesKeepConcurrentLedgersDistinct(t *testing.T) {
 	}
 }
 
+type brokerRemoteConn struct {
+	net.Conn
+	remote net.Addr
+}
+
+func (connection brokerRemoteConn) RemoteAddr() net.Addr { return connection.remote }
+
 func TestConfirmationCaseSnapshotAttributesDeliveredEmbeddingToActiveGeneration(t *testing.T) {
 	attempts := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -197,7 +204,9 @@ func TestConfirmationCaseSnapshotAttributesReaderCallToActiveGeneration(t *testi
 	))
 	request.RemoteAddr = "127.0.0.1:4321"
 	response := httptest.NewRecorder()
-	broker.handleChat(response, request, session)
+	broker.handleChat(response, request, brokerSourceLease{
+		session: session, sourceIP: session.expectedSourceIP, epoch: session.sourceEpoch,
+	})
 	if response.Code != http.StatusOK {
 		t.Fatalf("response=%d %s", response.Code, response.Body.String())
 	}
@@ -208,6 +217,194 @@ func TestConfirmationCaseSnapshotAttributesReaderCallToActiveGeneration(t *testi
 	if snapshot.ReaderAttempts != 1 || snapshot.ReaderDispatches != 1 || snapshot.ReaderReceipted != 1 ||
 		snapshot.ReaderInFlight != 0 || snapshot.ReaderCancellations != 0 || snapshot.EmbeddingAttempts != 0 {
 		t.Fatalf("reader case snapshot=%+v", snapshot)
+	}
+}
+
+func TestConfirmationSourceLeaseRejectsZeroDrainingAndStaleEpochBeforeAttribution(t *testing.T) {
+	broker := newInferenceBroker(1, 1)
+	id, runID, source := "confirmation-source-epoch", uuid.NewString(), "192.0.2.90"
+	var upstreamCalls atomic.Int64
+	session := &brokerSession{
+		id: id, boundRunID: runID, expectedSourceIP: source, sourceEpoch: 1,
+		expiresAt: time.Now().Add(time.Hour), benchVersion: confirmationBenchVersion,
+		confirmationSession: true, requestModel: llm.HarnessModelForVersion(confirmationBenchVersion),
+		model: llm.HarnessModelForVersion(confirmationBenchVersion),
+		trustedChatHandler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			upstreamCalls.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+		}),
+		cancels: make(map[string]context.CancelFunc),
+	}
+	broker.sessions[id] = session
+	chat := func(lease brokerSourceLease) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+			`{"model":"ignored","messages":[{"role":"user","content":"query"}]}`))
+		request.RemoteAddr = source + ":4321"
+		response := httptest.NewRecorder()
+		broker.handleChat(response, request, lease)
+		return response
+	}
+	embed := func() *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, embeddingAPIPath, strings.NewReader(
+			`{"model":"embeddinggemma","input":["query"]}`))
+		request.RemoteAddr = source + ":4321"
+		response := httptest.NewRecorder()
+		broker.handleEmbedding(response, request)
+		return response
+	}
+	lease := brokerSourceLease{session: session, sourceIP: source, epoch: 1}
+	if response := chat(lease); response.Code != http.StatusConflict {
+		t.Fatalf("generation-zero response = %d", response.Code)
+	}
+	if response := embed(); response.Code != http.StatusConflict {
+		t.Fatalf("generation-zero embedding response = %d", response.Code)
+	}
+	generation, _, err := broker.beginCaseSnapshot(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := lease
+	if !broker.unbindSource(id, runID, source) || !broker.bindSource(id, runID, source) {
+		t.Fatal("same-IP source rotation failed")
+	}
+	if response := chat(stale); response.Code != http.StatusUnauthorized {
+		t.Fatalf("stale-epoch response = %d", response.Code)
+	}
+	request := httptest.NewRequest(http.MethodPost, embeddingAPIPath, strings.NewReader(
+		`{"model":"embeddinggemma","input":["query"]}`))
+	request.RemoteAddr = source + ":4321"
+	response := httptest.NewRecorder()
+	broker.handleEmbeddingWithLease(response, request, stale)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("stale-epoch embedding response = %d", response.Code)
+	}
+	session.mu.Lock()
+	currentEpoch := session.sourceEpoch
+	snapshot := session.caseSnapshots[generation]
+	session.mu.Unlock()
+	if snapshot.ReaderAttempts != 0 || snapshot.EmbeddingAttempts != 0 || snapshot.ActiveHandlers != 0 || upstreamCalls.Load() != 0 {
+		t.Fatalf("stale lease mutated attribution: %+v calls=%d", snapshot, upstreamCalls.Load())
+	}
+	if err := broker.beginConfirmationCaseDrain(id, generation); err != nil {
+		t.Fatal(err)
+	}
+	current := brokerSourceLease{session: session, sourceIP: source, epoch: currentEpoch}
+	if response := chat(current); response.Code != http.StatusConflict {
+		t.Fatalf("draining response = %d", response.Code)
+	}
+	if response := embed(); response.Code != http.StatusConflict {
+		t.Fatalf("draining embedding response = %d", response.Code)
+	}
+	session.mu.Lock()
+	snapshot = session.caseSnapshots[generation]
+	session.mu.Unlock()
+	if snapshot.ReaderAttempts != 0 || snapshot.EmbeddingAttempts != 0 || snapshot.ActiveHandlers != 0 || upstreamCalls.Load() != 0 {
+		t.Fatalf("draining request mutated attribution: %+v calls=%d", snapshot, upstreamCalls.Load())
+	}
+}
+
+func TestConfirmationConnectionAcceptedBeforeRebindKeepsStaleEpoch(t *testing.T) {
+	broker := newInferenceBroker(1, 1)
+	id, runID, source := "confirmation-accepted-before-rebind", uuid.NewString(), "192.0.2.91"
+	var upstreamCalls atomic.Int64
+	model := llm.HarnessModelForVersion(confirmationBenchVersion)
+	session := &brokerSession{
+		id: id, boundRunID: runID, expectedSourceIP: source, sourceEpoch: 1,
+		expiresAt: time.Now().Add(time.Hour), benchVersion: confirmationBenchVersion,
+		confirmationSession: true, requestModel: model, model: model,
+		trustedChatHandler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			upstreamCalls.Add(1)
+			writeJSON(w, http.StatusOK, map[string]any{"choices": []any{}, "usage": map[string]int{}})
+		}),
+		cancels: make(map[string]context.CancelFunc),
+	}
+	broker.sessions[id] = session
+	first, _, err := broker.beginCaseSnapshot(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := broker.connectionContext(context.Background(), brokerRemoteConn{remote: &net.TCPAddr{
+		IP: net.ParseIP(source), Port: 4321,
+	}})
+	if err := broker.beginConfirmationCaseDrain(id, first); err != nil {
+		t.Fatal(err)
+	}
+	if !broker.unbindSource(id, runID, source) {
+		t.Fatal("failed to revoke first source epoch")
+	}
+	if _, err := broker.endCaseSnapshot(id, first); err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := broker.beginCaseSnapshot(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !broker.bindSource(id, runID, source) {
+		t.Fatal("failed to reuse source IP for second case")
+	}
+
+	chat := httptest.NewRequest(http.MethodPost, "/v1/inference/chat/completions", strings.NewReader(
+		`{"model":"ignored","messages":[{"role":"user","content":"late"}]}`)).WithContext(accepted)
+	chat.RemoteAddr = source + ":4321"
+	chat.SetPathValue("rest", "chat/completions")
+	chatResponse := httptest.NewRecorder()
+	broker.handle(chatResponse, chat)
+	if chatResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("queued old chat status=%d", chatResponse.Code)
+	}
+
+	embed := httptest.NewRequest(http.MethodPost, embeddingAPIPath, strings.NewReader(
+		`{"model":"embeddinggemma","input":["late"]}`)).WithContext(accepted)
+	embed.RemoteAddr = source + ":4321"
+	embedResponse := httptest.NewRecorder()
+	broker.handleEmbedding(embedResponse, embed)
+	if embedResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("queued old embedding status=%d", embedResponse.Code)
+	}
+	snapshot, err := broker.generationCaseSnapshot(id, second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.ReaderAttempts != 0 || snapshot.EmbeddingAttempts != 0 || snapshot.ActiveHandlers != 0 || upstreamCalls.Load() != 0 {
+		t.Fatalf("queued old connection contaminated second case: snapshot=%+v upstream=%d", snapshot, upstreamCalls.Load())
+	}
+}
+
+func TestConfirmationCaseDrainWaitsForEveryActiveHandler(t *testing.T) {
+	broker := newInferenceBroker(1, 1)
+	id := "confirmation-handler-drain"
+	session := &brokerSession{
+		confirmationSession: true, boundRunID: uuid.NewString(), expiresAt: time.Now().Add(time.Hour),
+		trustedChatHandler: http.NotFoundHandler(), caseSnapshots: make(map[uint64]brokerCaseSnapshot),
+	}
+	broker.sessions[id] = session
+	generation, _, err := broker.beginCaseSnapshot(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := broker.beginConfirmationCaseDrain(id, generation); err != nil {
+		t.Fatal(err)
+	}
+	session.mu.Lock()
+	snapshot := session.caseSnapshots[generation]
+	snapshot.ActiveHandlers = 1
+	session.caseSnapshots[generation] = snapshot
+	session.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	if _, err := broker.waitConfirmationCaseDrained(ctx, id, generation); err == nil {
+		t.Fatal("active handler drain unexpectedly succeeded")
+	}
+	session.mu.Lock()
+	snapshot = session.caseSnapshots[generation]
+	snapshot.ActiveHandlers = 0
+	session.caseSnapshots[generation] = snapshot
+	session.mu.Unlock()
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := broker.waitConfirmationCaseDrained(ctx, id, generation); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -2158,11 +2355,14 @@ func TestInferenceBrokerRejectsOverCapacityBeforeReadingBody(t *testing.T) {
 }
 
 func TestInferenceBrokerHTTPServerSetsUntrustedListenerTimeouts(t *testing.T) {
-	server := newInferenceBrokerHTTPServer(":11436", http.NewServeMux())
+	server := newInferenceBrokerHTTPServer(":11436", http.NewServeMux(), newInferenceBroker(1))
 	if server.ReadHeaderTimeout != brokerReadHeaderTimeout ||
 		server.ReadTimeout != brokerReadTimeout || server.WriteTimeout != brokerWriteTimeout ||
 		server.IdleTimeout != brokerIdleTimeout || server.MaxHeaderBytes != brokerMaximumHeaderBytes {
 		t.Fatalf("unexpected broker server limits: %+v", server)
+	}
+	if server.ConnContext == nil {
+		t.Fatal("broker server did not snapshot source leases at connection acceptance")
 	}
 }
 

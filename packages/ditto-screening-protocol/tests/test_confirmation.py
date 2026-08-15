@@ -22,6 +22,7 @@ from ditto_screening_protocol.confirmation import (
 from ditto_screening_protocol.confirmation_wire import (
     ConfirmationWireError,
     completion_report_from_go_fixture,
+    longmem_envelope_from_go,
 )
 
 _FIXTURE_PATH = (
@@ -32,6 +33,15 @@ _FIXTURE_PATH = (
     / "confirmationwire"
     / "testdata"
     / "go_confirmation_evidence_v9.json"
+)
+_ZERO_LONGMEM_FIXTURE_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "services"
+    / "dittobench-api"
+    / "internal"
+    / "longmemeval"
+    / "testdata"
+    / "go_longmem_official_zero_v2.json"
 )
 
 
@@ -86,6 +96,60 @@ def test_real_go_fixture_has_pinned_normalized_canonical_digests() -> None:
     assert hashlib.sha256(canonical_json(report)).hexdigest() == (
         "3266ec7830fa0dda44f28e86ec649f9a8b45d7073a3552d6312303a10dd5aa26"
     )
+
+
+def test_real_go_official_zero_fixture_normalizes_without_synthetic_receipts() -> None:
+    raw = json.loads(_ZERO_LONGMEM_FIXTURE_PATH.read_text())
+    envelope = longmem_envelope_from_go(raw)
+
+    assert envelope.request_count == 0
+    assert envelope.input_tokens == 0
+    assert envelope.output_tokens == 0
+    assert envelope.provider_cost_microusd == 0
+    assert envelope.evidence.score.case_count == 12
+    assert envelope.evidence.score.longmem_mean_micros == 0
+    assert envelope.evidence.score.longmem_stderr_micros == 0
+    assert all(row.correct == 0 for row in envelope.evidence.score.per_capability)
+    assert all(row.requests == 0 for row in envelope.evidence.provider_evidence)
+    assert all(
+        row.receipt_set_sha256 == "" for row in envelope.evidence.provider_evidence
+    )
+
+
+def test_official_zero_requires_explicit_empty_receipt_and_rejects_mixed_lanes() -> (
+    None
+):
+    raw = json.loads(_ZERO_LONGMEM_FIXTURE_PATH.read_text())
+    evidence = raw["evidence"]
+    assert isinstance(evidence, dict)
+    providers = evidence["provider_evidence"]
+    assert isinstance(providers, list)
+    first = providers[0]
+    assert isinstance(first, dict)
+    del first["receipt_set_sha256"]
+    with pytest.raises(ConfirmationWireError, match="fields drifted"):
+        longmem_envelope_from_go(raw)
+
+    raw = json.loads(_ZERO_LONGMEM_FIXTURE_PATH.read_text())
+    evidence = raw["evidence"]
+    assert isinstance(evidence, dict)
+    providers = evidence["provider_evidence"]
+    assert isinstance(providers, list)
+    first = providers[0]
+    assert isinstance(first, dict)
+    first.update(
+        {
+            "requests": 1,
+            "successes": 1,
+            "receipted_requests": 1,
+            "receipt_set_sha256": "e" * 64,
+        }
+    )
+    raw["go_evidence_sha256"] = hashlib.sha256(
+        json.dumps(evidence, ensure_ascii=False, separators=(",", ":")).encode()
+    ).hexdigest()
+    with pytest.raises(ValidationError, match="cannot mix zero and positive"):
+        longmem_envelope_from_go(raw)
 
 
 def test_native_longmem_capability_order_is_frozen_before_normalization() -> None:

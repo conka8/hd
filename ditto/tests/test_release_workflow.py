@@ -251,6 +251,7 @@ def test_post_release_fanout_evaluates_after_optional_verification_skips() -> No
         "smoke-validator-arm64": ("build-validator",),
         "stage-stack-release": ("assemble-stack",),
         "promote-stack-release": (
+            "deploy_platform",
             "assemble-stack",
             "smoke-stack-runtime-amd64",
             "smoke-validator-arm64",
@@ -859,11 +860,16 @@ def test_validator_release_smokes_each_architecture_before_promotion() -> None:
     assert jobs["promote-stack-release"]["needs"] == [
         "plan",
         "release",
+        "deploy_platform",
         "assemble-stack",
         "smoke-stack-runtime-amd64",
         "smoke-validator-arm64",
         "stage-stack-release",
     ]
+    promotion_condition = jobs["promote-stack-release"]["if"]
+    assert "needs.plan.outputs.platform == 'true'" in promotion_condition
+    assert "needs.deploy_platform.result == 'success'" in promotion_condition
+    assert "needs.deploy_platform.result == 'skipped'" in promotion_condition
 
 
 def test_dittobench_prepare_does_not_repeat_exact_source_tests() -> None:
