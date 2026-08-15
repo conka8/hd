@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v0.70.0 (2026-08-15)
+
+### Bug Fixes
+
+- **platform**: Show composites at six decimals on the board
+  ([#845](https://github.com/ditto-assistant/ditto-subnet/pull/845),
+  [`f5a5158`](https://github.com/ditto-assistant/ditto-subnet/commit/f5a5158d1b894b00b0c6eceaf0d3d37fa5079f54))
+
+### Features
+
+- **dashboard**: Reflow the leaderboard into cards on phones
+  ([#846](https://github.com/ditto-assistant/ditto-subnet/pull/846),
+  [`d3854d4`](https://github.com/ditto-assistant/ditto-subnet/commit/d3854d469de780ad1dcdb6cf3b245391c431ed98))
+
+
 ## v0.69.0 (2026-08-15)
 
 ### Bug Fixes
