@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.68.3 (2026-08-15)
+
+### Bug Fixes
+
+- **dittobench**: Route LongMem providers under ZDR
+  ([#808](https://github.com/ditto-assistant/ditto-subnet/pull/808),
+  [`6fd4570`](https://github.com/ditto-assistant/ditto-subnet/commit/6fd457059d76fb4fd86aaeaf86da715937ca5f8e))
+
+
 ## v0.68.2 (2026-08-15)
 
 ### Bug Fixes
