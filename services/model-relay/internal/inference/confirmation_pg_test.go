@@ -429,7 +429,9 @@ func TestConfirmationChatDeclines(t *testing.T) {
 }
 
 func TestConfirmationChatProviderFailureChargesReservation(t *testing.T) {
+	var calls int
 	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":"boom"}`))
 	}))
@@ -440,6 +442,9 @@ func TestConfirmationChatProviderFailureChargesReservation(t *testing.T) {
 	body := []byte(confirmationChatBody())
 	w := serve(f.deps, proxyRequest(confirmationChatPath, string(body), f.signedHeaders(1, nonce, body)))
 	expectEnvelope(t, w, 502, relayhttp.CodeHTTPException, "confirmation provider unavailable")
+	if calls != providerMaxAttempts {
+		t.Fatalf("terminal provider attempts: got %d want %d", calls, providerMaxAttempts)
+	}
 
 	ctx := t.Context()
 	var status string
@@ -464,6 +469,86 @@ func TestConfirmationChatProviderFailureChargesReservation(t *testing.T) {
 	}
 	if active != 0 || grantPrompt != reserved {
 		t.Fatalf("grant accounting after failure: active=%d prompt=%d want %d", active, grantPrompt, reserved)
+	}
+}
+
+func TestConfirmationChatRetriesBackpressureOnFrozenRoute(t *testing.T) {
+	var calls int
+	var sleeps []time.Duration
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode upstream payload: %v", err)
+		}
+		provider, _ := payload["provider"].(map[string]any)
+		if provider["zdr"] != true || provider["allow_fallbacks"] != false {
+			t.Errorf("attempt %d widened frozen route: %v", calls, provider)
+		}
+		only, _ := provider["only"].([]any)
+		order, _ := provider["order"].([]any)
+		if len(only) != 1 || only[0] != confirmationTestProvider ||
+			len(order) != 1 || order[0] != confirmationTestProvider {
+			t.Errorf("attempt %d changed provider pin: %v", calls, provider)
+		}
+		switch calls {
+		case 1:
+			w.Header().Set("Retry-After", "120")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":"rate limited"}`))
+		case 2:
+			w.Header().Set("Retry-After", "2")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"provider capacity"}`))
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"id":"gen-retried","object":"chat.completion","created":1755000000,
+				"model":"` + confirmationTestModel + `","provider":"deepinfra",
+				"choices":[{"index":0,"finish_reason":"stop","logprobs":null,
+					"message":{"role":"assistant","content":"memory"}}],
+				"usage":{"prompt_tokens":12,"completion_tokens":5,"cost":0.0021,"total_tokens":17}
+			}`))
+		}
+	}))
+	defer upstream.Close()
+	f := newConfirmationFixture(t, chatTestConfig(t, upstream.URL), "reader", confirmationTestModel, "openrouter")
+	f.deps.Sleep = func(_ context.Context, delay time.Duration) { sleeps = append(sleeps, delay) }
+
+	body := []byte(confirmationChatBody())
+	w := serve(f.deps, proxyRequest(confirmationChatPath, string(body), f.signedHeaders(1, uuid.New(), body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("retried completion: %d %s", w.Code, w.Body.String())
+	}
+	if calls != providerMaxAttempts {
+		t.Fatalf("provider attempts: got %d want %d", calls, providerMaxAttempts)
+	}
+	wantSleeps := []time.Duration{5 * time.Second, 2 * time.Second}
+	if len(sleeps) != len(wantSleeps) {
+		t.Fatalf("retry sleeps: got %v want %v", sleeps, wantSleeps)
+	}
+	for index := range wantSleeps {
+		if sleeps[index] != wantSleeps[index] {
+			t.Fatalf("retry sleeps: got %v want %v", sleeps, wantSleeps)
+		}
+	}
+}
+
+func TestConfirmationChatDoesNotRetryTerminalProviderRejection(t *testing.T) {
+	var calls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid request"}`))
+	}))
+	defer upstream.Close()
+	f := newConfirmationFixture(t, chatTestConfig(t, upstream.URL), "reader", confirmationTestModel, "openrouter")
+
+	body := []byte(confirmationChatBody())
+	w := serve(f.deps, proxyRequest(confirmationChatPath, string(body), f.signedHeaders(1, uuid.New(), body)))
+	expectEnvelope(t, w, 502, relayhttp.CodeHTTPException, "confirmation provider unavailable")
+	if calls != 1 {
+		t.Fatalf("non-retryable provider attempts: got %d want 1", calls)
 	}
 }
 

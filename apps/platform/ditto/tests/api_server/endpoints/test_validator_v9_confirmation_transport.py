@@ -52,6 +52,7 @@ from ditto.api_server.confirmation_profile_installation import (
 )
 from ditto.api_server.confirmation_wire import completion_report_from_go_dimensions
 from ditto.api_server.dependencies import get_chain_client, get_session
+from ditto.api_server.endpoints import inference as inference_mod
 from ditto.api_server.endpoints import validator_confirmation as confirmation_mod
 from ditto.api_server.endpoints.inference import _proxy_message
 from ditto.api_server.endpoints.validator_confirmation import (
@@ -754,6 +755,106 @@ class TestV9ConfirmationEmbeddingProxy:
 
 
 class TestV9ConfirmationChatProxy:
+    async def test_reader_retries_backpressure_without_widening_frozen_route(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        session_maker: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        offers, signer = await _claim_installed_profile_offers(
+            app, client, session_maker
+        )
+        offer = next(item for item in offers if item["lane"] == "reader")
+        app.state.session_maker = session_maker
+        _enable_confirmation_proxy(app)
+        body, headers = _confirmation_chat_request(offer, signer)
+        upstream_calls = 0
+        retry_backpressure_values: list[bool] = []
+        original_post = inference_mod._post_provider_with_retry
+
+        async def no_delay_post(
+            provider_client: httpx.AsyncClient,
+            url: str,
+            *,
+            payload: dict[str, Any],
+            headers: dict[str, str],
+            retry_backpressure: bool = True,
+        ) -> Any:
+            retry_backpressure_values.append(retry_backpressure)
+
+            async def no_sleep(_: float) -> None:
+                return None
+
+            return await original_post(
+                provider_client,
+                url,
+                payload=payload,
+                headers=headers,
+                retry_backpressure=retry_backpressure,
+                sleep=no_sleep,
+            )
+
+        monkeypatch.setattr(inference_mod, "_post_provider_with_retry", no_delay_post)
+
+        async def provider(request: httpx.Request) -> httpx.Response:
+            nonlocal upstream_calls
+            upstream_calls += 1
+            payload = json.loads(request.content)
+            assert payload["provider"] == {
+                "only": ["deepinfra"],
+                "order": ["deepinfra"],
+                "allow_fallbacks": False,
+                "require_parameters": True,
+                "data_collection": "deny",
+                "zdr": True,
+            }
+            if upstream_calls == 1:
+                return httpx.Response(
+                    429,
+                    request=request,
+                    headers={"Retry-After": "120"},
+                    json={"error": "rate limited"},
+                )
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "id": "generation-reader-retried",
+                    "object": "chat.completion",
+                    "created": 1,
+                    "model": offer["model"],
+                    "provider": offer["receipt_provider"],
+                    "choices": [
+                        {
+                            "index": 0,
+                            "finish_reason": "stop",
+                            "message": {"role": "assistant", "content": "memory"},
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 5,
+                        "completion_tokens": 1,
+                        "total_tokens": 6,
+                        "cost": 0.00001,
+                    },
+                },
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(provider)
+        ) as provider_client:
+            app.state.inference_client = provider_client
+            response = await client.post(
+                "/api/v1/inference/confirmation/chat/completions",
+                content=body,
+                headers=headers,
+            )
+
+        assert response.status_code == 200, response.text
+        assert upstream_calls == 2
+        assert retry_backpressure_values == [True]
+
     async def test_installed_judge_profile_reaches_zdr_azure_route(
         self,
         app: FastAPI,

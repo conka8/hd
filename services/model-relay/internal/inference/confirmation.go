@@ -657,18 +657,29 @@ func (d *Deps) handleConfirmationChatCompletions(w http.ResponseWriter, r *http.
 
 	var raw []byte
 	providerFailure := func() *httpError {
-		// One shot at the frozen route, no backpressure retry-in-place
-		// (retry_backpressure=False), no recovery phase.
+		// Retry explicit provider backpressure in place. Every attempt keeps the
+		// same frozen provider route and request payload, so this does not widen
+		// the capability or permit a fallback provider. The shared retry loop is
+		// bounded to providerMaxAttempts and fails closed on ambiguous reads.
 		result, callErr := postProviderWithRetry(ctx, d.Upstream, cfg.UpstreamURL, upstreamPayload,
 			openrouterHeaders(cfg.OpenRouterAPIKey, true), cfg.ResponseBodyBytes, cfg.TimeoutSeconds,
-			false, d.sleep())
+			true, d.sleep())
 		if callErr != nil {
+			d.Logger.Warn("confirmation provider transport failed",
+				slog.String("lane", grantSnapshot.Lane),
+				slog.Int("upstream_attempts", callErr.attempts),
+				slog.Bool("timed_out", callErr.timedOut))
 			// _ProviderCallError is UNCAUGHT in the Python endpoint (only
 			// ValueError is handled): it escapes as an internal server error
 			// after the finally settles. Reproduced deliberately.
 			return &httpError{status: 500, message: "internal server error"}
 		}
 		if result.status >= 400 {
+			d.Logger.Warn("confirmation provider rejected request",
+				slog.String("lane", grantSnapshot.Lane),
+				slog.Int("upstream_status", result.status),
+				slog.Int("upstream_attempts", result.attempts),
+				slog.Bool("backpressure", providerIsBackpressure(result.status, result.header)))
 			return httpErrorf(502, "confirmation provider unavailable")
 		}
 		if result.bodyOverLimit {
