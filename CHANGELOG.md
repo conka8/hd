@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.68.13 (2026-08-15)
+
+### Bug Fixes
+
+- **validator**: Preserve productive benchmark attempts
+  ([#819](https://github.com/ditto-assistant/ditto-subnet/pull/819),
+  [`ef043a3`](https://github.com/ditto-assistant/ditto-subnet/commit/ef043a34fa9d55c6f824c22bc3463ae9bfc7ab10))
+
+
 ## v0.68.12 (2026-08-15)
 
 ### Bug Fixes
