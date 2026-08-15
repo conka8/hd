@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v0.66.0 (2026-08-15)
+
+### Bug Fixes
+
+- **platform**: Skip unchanged efficiency materialization
+  ([#792](https://github.com/ditto-assistant/ditto-subnet/pull/792),
+  [`fd024b6`](https://github.com/ditto-assistant/ditto-subnet/commit/fd024b6d29e5f1a91033fc9fd572046ddc5d5815))
+
+### Features
+
+- **perf**: Add cross-runtime profiling
+  ([#789](https://github.com/ditto-assistant/ditto-subnet/pull/789),
+  [`6e07f14`](https://github.com/ditto-assistant/ditto-subnet/commit/6e07f14e8589ee9b73ac707d323473d1c95f91fe))
+
+
 ## v0.65.2 (2026-08-15)
 
 ### Bug Fixes
