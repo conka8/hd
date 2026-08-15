@@ -282,6 +282,7 @@ async def _post_provider_with_retry(
     payload: dict[str, Any],
     headers: dict[str, str],
     retry_backpressure: bool = True,
+    retry_pre_provider_not_found_model: str | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> _ProviderResult:
     """Run one logical provider request under the shared bounded retry policy.
@@ -306,8 +307,14 @@ async def _post_provider_with_retry(
             raise _ProviderCallError(attempts=attempt, timed_out=True) from error
         except httpx.TransportError as error:
             raise _ProviderCallError(attempts=attempt, timed_out=False) from error
+        retryable_status = response.status_code in _PROVIDER_RETRY_STATUSES or (
+            _is_retryable_pre_provider_not_found(
+                response,
+                expected_model=retry_pre_provider_not_found_model,
+            )
+        )
         if (
-            response.status_code in _PROVIDER_RETRY_STATUSES
+            retryable_status
             and attempt < _PROVIDER_MAX_ATTEMPTS
             and (retry_backpressure or not _provider_is_backpressure(response))
         ):
@@ -320,6 +327,73 @@ async def _post_provider_with_retry(
             continue
         return _ProviderResult(response=response, attempts=attempt)
     raise AssertionError("provider retry loop exhausted without a terminal result")
+
+
+def _is_retryable_pre_provider_not_found(
+    response: httpx.Response, *, expected_model: str | None
+) -> bool:
+    """Recognize an unbilled OpenRouter route miss before any provider call."""
+    if response.status_code != 404 or not expected_model:
+        return False
+
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        decoded: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in decoded:
+                raise ValueError("duplicate JSON object key")
+            decoded[key] = value
+        return decoded
+
+    try:
+        payload = json.loads(
+            response.content,
+            object_pairs_hook=reject_duplicate_keys,
+        )
+    except ValueError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    error = payload.get("error")
+    error_code = error.get("code") if isinstance(error, dict) else None
+    if (
+        not isinstance(error_code, int)
+        or isinstance(error_code, bool)
+        or error_code != 404
+    ):
+        return False
+    metadata = payload.get("openrouter_metadata")
+    attempt = metadata.get("attempt") if isinstance(metadata, dict) else None
+    if (
+        not isinstance(metadata, dict)
+        or metadata.get("requested") != expected_model
+        or not isinstance(attempt, int)
+        or isinstance(attempt, bool)
+        or attempt != 0
+        or "attempts" in metadata
+    ):
+        return False
+    endpoints = metadata.get("endpoints")
+    available = endpoints.get("available") if isinstance(endpoints, dict) else None
+    if not isinstance(available, list) or not 1 <= len(available) <= 100:
+        return False
+    if any(
+        not isinstance(endpoint, dict) or endpoint.get("selected") is not False
+        for endpoint in available
+    ):
+        return False
+    return not any(
+        field in payload
+        for field in (
+            "id",
+            "generation",
+            "generation_id",
+            "model",
+            "provider",
+            "choices",
+            "usage",
+            "cost",
+        )
+    )
 
 
 async def _post_embedding_provider(
@@ -2309,6 +2383,7 @@ async def proxy_confirmation_chat_completions(
             # Keep all retries on the exact purpose-bound provider route. The
             # shared loop is bounded and still fails closed on ambiguous reads.
             retry_backpressure=True,
+            retry_pre_provider_not_found_model=expected_model,
         )
         if result.response.status_code >= 400:
             logger.warning(

@@ -663,7 +663,7 @@ func (d *Deps) handleConfirmationChatCompletions(w http.ResponseWriter, r *http.
 		// bounded to providerMaxAttempts and fails closed on ambiguous reads.
 		result, callErr := postProviderWithRetry(ctx, d.Upstream, cfg.UpstreamURL, upstreamPayload,
 			openrouterHeaders(cfg.OpenRouterAPIKey, true), cfg.ResponseBodyBytes, cfg.TimeoutSeconds,
-			true, d.sleep())
+			true, expectedModel, d.sleep())
 		if callErr != nil {
 			d.Logger.Warn("confirmation provider transport failed",
 				slog.String("lane", grantSnapshot.Lane),

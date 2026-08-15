@@ -6,10 +6,12 @@
 package inference
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -557,6 +559,169 @@ func TestConfirmationChatRetriesBackpressureOnFrozenRoute(t *testing.T) {
 		grantPrompt != 12 || grantCompletion != 5 || grantCost != 2100 {
 		t.Fatalf("retried grant accounting: count=%d active=%d rows=%d %d/%d cost=%d",
 			requestCount, active, rows, grantPrompt, grantCompletion, grantCost)
+	}
+}
+
+func preProviderNotFoundBody(model string) string {
+	return `{
+		"error":{"code":404,"message":"No allowed providers are available for the selected model"},
+		"openrouter_metadata":{
+			"requested":"` + model + `","strategy":"direct","attempt":0,
+			"endpoints":{"total":1,"available":[{
+				"provider":"DeepInfra","model":"` + model + `","selected":false
+			}]}
+		}
+	}`
+}
+
+func TestConfirmationChatRetriesOnlyPreProviderRouteMiss(t *testing.T) {
+	var calls int
+	var attempts [][]byte
+	var sleeps []time.Duration
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read upstream payload: %v", err)
+		}
+		attempts = append(attempts, body)
+		var payload map[string]any
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("decode upstream payload: %v", err)
+		}
+		provider, _ := payload["provider"].(map[string]any)
+		if provider["zdr"] != true || provider["allow_fallbacks"] != false {
+			t.Errorf("attempt %d widened frozen route: %v", calls, provider)
+		}
+		if calls == 1 {
+			w.Header().Set("Retry-After", "120")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(preProviderNotFoundBody(confirmationTestModel)))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"gen-route-recovered","object":"chat.completion","created":1755000000,
+			"model":"` + confirmationTestModel + `","provider":"deepinfra",
+			"choices":[{"index":0,"finish_reason":"stop","logprobs":null,
+				"message":{"role":"assistant","content":"memory"}}],
+			"usage":{"prompt_tokens":12,"completion_tokens":5,"cost":0.0021,"total_tokens":17}
+		}`))
+	}))
+	defer upstream.Close()
+	f := newConfirmationFixture(t, chatTestConfig(t, upstream.URL), "reader", confirmationTestModel, "openrouter")
+	f.deps.Sleep = func(_ context.Context, delay time.Duration) { sleeps = append(sleeps, delay) }
+
+	nonce := uuid.New()
+	body := []byte(confirmationChatBody())
+	w := serve(f.deps, proxyRequest(confirmationChatPath, string(body), f.signedHeaders(1, nonce, body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("route-miss recovery: %d %s", w.Code, w.Body.String())
+	}
+	if calls != 2 || len(attempts) != 2 || !bytes.Equal(attempts[0], attempts[1]) {
+		t.Fatalf("identical bounded attempts: calls=%d equal=%v", calls,
+			len(attempts) == 2 && bytes.Equal(attempts[0], attempts[1]))
+	}
+	if len(sleeps) != 1 || sleeps[0] != 250*time.Millisecond {
+		t.Fatalf("route-miss sleep ignored fixed backoff: %v", sleeps)
+	}
+	var status string
+	var requestCount, active, rows int
+	var prompt, completion, cost int64
+	if err := f.pool.QueryRow(t.Context(),
+		`SELECT r.status, g.request_count, g.active_requests, g.prompt_tokens,
+		        g.completion_tokens, g.cost_microusd,
+		        (SELECT count(*) FROM confirmation_inference_requests WHERE grant_id = $1)
+		 FROM confirmation_inference_requests r
+		 JOIN confirmation_inference_grants g ON g.grant_id = r.grant_id
+		 WHERE r.grant_id = $1 AND r.nonce = $2`, f.grantID, nonce).
+		Scan(&status, &requestCount, &active, &prompt, &completion, &cost, &rows); err != nil {
+		t.Fatalf("read recovered accounting: %v", err)
+	}
+	if status != "completed" || requestCount != 1 || active != 0 || rows != 1 ||
+		prompt != 12 || completion != 5 || cost != 2100 {
+		t.Fatalf("route-miss accounting: status=%s count=%d active=%d rows=%d %d/%d cost=%d",
+			status, requestCount, active, rows, prompt, completion, cost)
+	}
+}
+
+func TestConfirmationChatPreProviderRouteMissExhaustionSettlesOnce(t *testing.T) {
+	var calls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "120")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(preProviderNotFoundBody(confirmationTestModel)))
+	}))
+	defer upstream.Close()
+	f := newConfirmationFixture(t, chatTestConfig(t, upstream.URL), "reader", confirmationTestModel, "openrouter")
+
+	nonce := uuid.New()
+	body := []byte(confirmationChatBody())
+	w := serve(f.deps, proxyRequest(confirmationChatPath, string(body), f.signedHeaders(1, nonce, body)))
+	expectEnvelope(t, w, 502, relayhttp.CodeHTTPException, "confirmation provider unavailable")
+	if calls != providerMaxAttempts {
+		t.Fatalf("route-miss attempts: got %d want %d", calls, providerMaxAttempts)
+	}
+	var status string
+	var requestCount, active, rows int
+	var prompt, completion, cost, reserved int64
+	if err := f.pool.QueryRow(t.Context(),
+		`SELECT r.status, g.request_count, g.active_requests, g.prompt_tokens,
+		        g.completion_tokens, g.cost_microusd, r.reserved_tokens,
+		        (SELECT count(*) FROM confirmation_inference_requests WHERE grant_id = $1)
+		 FROM confirmation_inference_requests r
+		 JOIN confirmation_inference_grants g ON g.grant_id = r.grant_id
+		 WHERE r.grant_id = $1 AND r.nonce = $2`, f.grantID, nonce).
+		Scan(&status, &requestCount, &active, &prompt, &completion, &cost, &reserved, &rows); err != nil {
+		t.Fatalf("read exhausted route-miss accounting: %v", err)
+	}
+	if status != "failed" || requestCount != 1 || active != 0 || rows != 1 ||
+		prompt != reserved || completion != 0 || cost != 0 {
+		t.Fatalf("route-miss exhaustion accounting: status=%s count=%d active=%d rows=%d %d/%d cost=%d",
+			status, requestCount, active, rows, prompt, completion, cost)
+	}
+}
+
+func TestPreProviderNotFoundClassificationFailsClosed(t *testing.T) {
+	valid := preProviderNotFoundBody(confirmationTestModel)
+	tests := map[string]string{
+		"ordinary 404":                      `{"error":{"code":404}}`,
+		"wrong model":                       strings.Replace(valid, confirmationTestModel, "other/model", 1),
+		"provider attempt":                  strings.Replace(valid, `"attempt":0`, `"attempt":1`, 1),
+		"attempt list present":              strings.Replace(valid, `"attempt":0,`, `"attempt":0,"attempts":[],`, 1),
+		"selected endpoint":                 strings.Replace(valid, `"selected":false`, `"selected":true`, 1),
+		"usage present":                     strings.Replace(valid, `"openrouter_metadata"`, `"usage":{"cost":0},"openrouter_metadata"`, 1),
+		"id present":                        strings.Replace(valid, `"openrouter_metadata"`, `"id":"gen-billed","openrouter_metadata"`, 1),
+		"generation present":                strings.Replace(valid, `"openrouter_metadata"`, `"generation":"gen-billed","openrouter_metadata"`, 1),
+		"generation id present":             strings.Replace(valid, `"openrouter_metadata"`, `"generation_id":"gen-billed","openrouter_metadata"`, 1),
+		"model present":                     strings.Replace(valid, `"openrouter_metadata"`, `"model":"`+confirmationTestModel+`","openrouter_metadata"`, 1),
+		"provider present":                  strings.Replace(valid, `"openrouter_metadata"`, `"provider":"DeepInfra","openrouter_metadata"`, 1),
+		"choices present":                   strings.Replace(valid, `"openrouter_metadata"`, `"choices":[],"openrouter_metadata"`, 1),
+		"cost present":                      strings.Replace(valid, `"openrouter_metadata"`, `"cost":0,"openrouter_metadata"`, 1),
+		"boolean attempt is not integer":    strings.Replace(valid, `"attempt":0`, `"attempt":false`, 1),
+		"decimal attempt is not integer":    strings.Replace(valid, `"attempt":0`, `"attempt":0.0`, 1),
+		"decimal error code is not integer": strings.Replace(valid, `"code":404`, `"code":404.0`, 1),
+		"duplicate error code":              strings.Replace(valid, `"code":404`, `"code":500,"code":404`, 1),
+		"duplicate requested model":         strings.Replace(valid, `"requested":"`+confirmationTestModel+`"`, `"requested":"other/model","requested":"`+confirmationTestModel+`"`, 1),
+		"duplicate attempt":                 strings.Replace(valid, `"attempt":0`, `"attempt":1,"attempt":0`, 1),
+		"duplicate selected":                strings.Replace(valid, `"selected":false`, `"selected":true,"selected":false`, 1),
+	}
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			if isRetryablePreProviderNotFound(&providerHTTPResult{
+				status: http.StatusNotFound,
+				body:   []byte(body),
+			}, confirmationTestModel) {
+				t.Fatal("ambiguous 404 was classified retryable")
+			}
+		})
+	}
+	if !isRetryablePreProviderNotFound(&providerHTTPResult{
+		status: http.StatusNotFound,
+		body:   []byte(valid),
+	}, confirmationTestModel) {
+		t.Fatal("documented pre-provider route miss was not retryable")
 	}
 }
 

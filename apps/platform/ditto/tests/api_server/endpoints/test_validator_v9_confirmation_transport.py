@@ -780,6 +780,7 @@ class TestV9ConfirmationChatProxy:
             payload: dict[str, Any],
             headers: dict[str, str],
             retry_backpressure: bool = True,
+            retry_pre_provider_not_found_model: str | None = None,
         ) -> Any:
             retry_backpressure_values.append(retry_backpressure)
 
@@ -792,6 +793,7 @@ class TestV9ConfirmationChatProxy:
                 payload=payload,
                 headers=headers,
                 retry_backpressure=retry_backpressure,
+                retry_pre_provider_not_found_model=(retry_pre_provider_not_found_model),
                 sleep=no_sleep,
             )
 
@@ -877,6 +879,255 @@ class TestV9ConfirmationChatProxy:
             assert grant.prompt_tokens == 5
             assert grant.completion_tokens == 1
             assert grant.cost_microusd == 10
+
+    async def test_reader_retries_only_documented_pre_provider_route_miss(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        session_maker: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        offers, signer = await _claim_installed_profile_offers(
+            app, client, session_maker
+        )
+        offer = next(item for item in offers if item["lane"] == "reader")
+        app.state.session_maker = session_maker
+        _enable_confirmation_proxy(app)
+        body, headers = _confirmation_chat_request(offer, signer)
+        attempts: list[bytes] = []
+        sleeps: list[float] = []
+        original_post = inference_mod._post_provider_with_retry
+
+        async def no_delay_post(
+            provider_client: httpx.AsyncClient,
+            url: str,
+            *,
+            payload: dict[str, Any],
+            headers: dict[str, str],
+            retry_backpressure: bool = True,
+            retry_pre_provider_not_found_model: str | None = None,
+        ) -> Any:
+            async def record_sleep(delay: float) -> None:
+                sleeps.append(delay)
+
+            return await original_post(
+                provider_client,
+                url,
+                payload=payload,
+                headers=headers,
+                retry_backpressure=retry_backpressure,
+                retry_pre_provider_not_found_model=(retry_pre_provider_not_found_model),
+                sleep=record_sleep,
+            )
+
+        monkeypatch.setattr(inference_mod, "_post_provider_with_retry", no_delay_post)
+
+        async def provider(request: httpx.Request) -> httpx.Response:
+            attempts.append(request.content)
+            payload = json.loads(request.content)
+            assert payload["model"] == offer["model"]
+            assert payload["provider"] == {
+                "only": ["deepinfra"],
+                "order": ["deepinfra"],
+                "allow_fallbacks": False,
+                "require_parameters": True,
+                "data_collection": "deny",
+                "zdr": True,
+            }
+            if len(attempts) == 1:
+                return httpx.Response(
+                    404,
+                    request=request,
+                    headers={"Retry-After": "120"},
+                    json={
+                        "error": {
+                            "code": 404,
+                            "message": (
+                                "No allowed providers are available for the "
+                                "selected model"
+                            ),
+                        },
+                        "openrouter_metadata": {
+                            "requested": offer["model"],
+                            "strategy": "direct",
+                            "attempt": 0,
+                            "endpoints": {
+                                "total": 1,
+                                "available": [
+                                    {
+                                        "provider": "DeepInfra",
+                                        "model": offer["model"],
+                                        "selected": False,
+                                    }
+                                ],
+                            },
+                        },
+                    },
+                )
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "id": "generation-reader-route-recovered",
+                    "object": "chat.completion",
+                    "created": 1,
+                    "model": offer["model"],
+                    "provider": offer["receipt_provider"],
+                    "choices": [
+                        {
+                            "index": 0,
+                            "finish_reason": "stop",
+                            "message": {"role": "assistant", "content": "memory"},
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 5,
+                        "completion_tokens": 1,
+                        "total_tokens": 6,
+                        "cost": 0.00001,
+                    },
+                },
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(provider)
+        ) as provider_client:
+            app.state.inference_client = provider_client
+            response = await client.post(
+                "/api/v1/inference/confirmation/chat/completions",
+                content=body,
+                headers=headers,
+            )
+
+        assert response.status_code == 200, response.text
+        assert len(attempts) == 2
+        assert attempts[0] == attempts[1]
+        assert sleeps == [0.25]
+        async with session_maker() as session:
+            request_rows = list(
+                await session.scalars(
+                    select(ConfirmationInferenceRequest).where(
+                        ConfirmationInferenceRequest.grant_id == UUID(offer["grant_id"])
+                    )
+                )
+            )
+            grant = await session.get(
+                ConfirmationInferenceGrant, UUID(offer["grant_id"])
+            )
+            assert len(request_rows) == 1
+            request_row = request_rows[0]
+            assert request_row.status == "completed"
+            assert request_row.prompt_tokens == 5
+            assert request_row.completion_tokens == 1
+            assert request_row.cost_microusd == 10
+            assert grant is not None
+            assert grant.request_count == 1
+            assert grant.active_requests == 0
+            assert grant.prompt_tokens == 5
+            assert grant.completion_tokens == 1
+            assert grant.cost_microusd == 10
+
+    async def test_pre_provider_route_miss_classifier_fails_closed(self) -> None:
+        model = "openai/gpt-oss-20b"
+        valid: dict[str, Any] = {
+            "error": {"code": 404, "message": "No allowed providers"},
+            "openrouter_metadata": {
+                "requested": model,
+                "strategy": "direct",
+                "attempt": 0,
+                "endpoints": {
+                    "total": 1,
+                    "available": [
+                        {
+                            "provider": "DeepInfra",
+                            "model": model,
+                            "selected": False,
+                        }
+                    ],
+                },
+            },
+        }
+
+        def response(payload: dict[str, Any]) -> httpx.Response:
+            return httpx.Response(404, json=payload)
+
+        assert inference_mod._is_retryable_pre_provider_not_found(
+            response(valid), expected_model=model
+        )
+        invalid = [
+            {"error": {"code": 404}},
+            {**valid, "error": {"code": 404.0}},
+            {**valid, "usage": {"cost": 0}},
+            {**valid, "id": "gen-billed"},
+            {**valid, "generation": "gen-billed"},
+            {**valid, "generation_id": "gen-billed"},
+            {**valid, "model": model},
+            {**valid, "provider": "DeepInfra"},
+            {**valid, "choices": []},
+            {**valid, "cost": 0},
+            {
+                **valid,
+                "openrouter_metadata": {
+                    **valid["openrouter_metadata"],
+                    "attempt": 1,
+                },
+            },
+            {
+                **valid,
+                "openrouter_metadata": {
+                    **valid["openrouter_metadata"],
+                    "attempt": 0.0,
+                },
+            },
+            {
+                **valid,
+                "openrouter_metadata": {
+                    **valid["openrouter_metadata"],
+                    "attempts": [],
+                },
+            },
+            {
+                **valid,
+                "openrouter_metadata": {
+                    **valid["openrouter_metadata"],
+                    "requested": "other/model",
+                },
+            },
+            {
+                **valid,
+                "openrouter_metadata": {
+                    **valid["openrouter_metadata"],
+                    "endpoints": {
+                        "total": 1,
+                        "available": [
+                            {
+                                "provider": "DeepInfra",
+                                "model": model,
+                                "selected": True,
+                            }
+                        ],
+                    },
+                },
+            },
+        ]
+        assert all(
+            not inference_mod._is_retryable_pre_provider_not_found(
+                response(payload), expected_model=model
+            )
+            for payload in invalid
+        )
+        duplicate_bodies = [
+            b'{"error":{"code":500,"code":404},"openrouter_metadata":{"requested":"openai/gpt-oss-20b","attempt":0,"endpoints":{"available":[{"selected":false}]}}}',
+            b'{"error":{"code":404},"openrouter_metadata":{"requested":"other/model","requested":"openai/gpt-oss-20b","attempt":0,"endpoints":{"available":[{"selected":false}]}}}',
+            b'{"error":{"code":404},"openrouter_metadata":{"requested":"openai/gpt-oss-20b","attempt":1,"attempt":0,"endpoints":{"available":[{"selected":false}]}}}',
+            b'{"error":{"code":404},"openrouter_metadata":{"requested":"openai/gpt-oss-20b","attempt":0,"endpoints":{"available":[{"selected":true,"selected":false}]}}}',
+        ]
+        assert all(
+            not inference_mod._is_retryable_pre_provider_not_found(
+                httpx.Response(404, content=body), expected_model=model
+            )
+            for body in duplicate_bodies
+        )
 
     async def test_installed_judge_profile_reaches_zdr_azure_route(
         self,
