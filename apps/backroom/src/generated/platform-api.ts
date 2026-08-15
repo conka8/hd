@@ -16103,6 +16103,8 @@ export interface components {
             identical_agent_status?: components["schemas"]["AgentStatus"] | null;
             /** Messages */
             messages: string[];
+            /** Netuid */
+            netuid?: number | null;
             /** Ok */
             ok: boolean;
             /** Payment Amount Rao */
@@ -16116,6 +16118,8 @@ export interface components {
             payment_send_address?: string | null;
             /** Retry At */
             retry_at?: string | null;
+            /** Subtensor Network */
+            subtensor_network?: string | null;
         };
         /** V7InferenceCalibration */
         V7InferenceCalibration: {

@@ -44,6 +44,8 @@ from ditto.miner_cli.errors import (
     PaymentRecoveryExpiredError,
     PaymentSubmissionError,
     PreCheckRejectedError,
+    RegistrationCancelledError,
+    RegistrationNotNeededError,
     SubmissionCooldownError,
     TransientApiError,
     UploadAgentRejectedError,
@@ -53,6 +55,7 @@ from ditto.miner_cli.models import (
     PendingUploadPayment,
     PreflightCheckResult,
     PreflightResult,
+    RegistrationQuote,
 )
 from ditto.miner_cli.preferences import AgentWalletIdentity
 
@@ -1628,3 +1631,519 @@ class TestPaymentDisposition:
         assert check_body.allow_identical_rescore is False
         upload_kwargs = client.post_upload_agent.call_args.kwargs
         assert upload_kwargs["allow_identical_rescore"] is False
+
+
+def _unregistered_check(
+    netuid: int | None = 118, subtensor_network: str | None = "local"
+) -> UploadCheckResponse:
+    return UploadCheckResponse(
+        ok=False,
+        error_codes=[1101],
+        messages=["hotkey is not registered on netuid 118"],
+        netuid=netuid,
+        subtensor_network=subtensor_network,
+    )
+
+
+def _multi_rejected_check() -> UploadCheckResponse:
+    return UploadCheckResponse(
+        ok=False,
+        netuid=118,
+        subtensor_network="local",
+        error_codes=[1100, 1101],
+        messages=[
+            "signature did not verify",
+            "hotkey is not registered on netuid 118",
+        ],
+    )
+
+
+def _quote(recycle_rao: int = 500_000, balance_rao: int = 12_402_100_000):
+    return RegistrationQuote(
+        netuid=118,
+        hotkey_ss58=HOTKEY,
+        coldkey_name="miner",
+        coldkey_ss58=DEST,
+        recycle_rao=recycle_rao,
+        balance_rao=balance_rao,
+    )
+
+
+class TestInlineRegistration:
+    """The 1101 pre-check rejection is resolvable without leaving the CLI.
+
+    The pre-check runs before any TAO moves, so a hotkey that is merely
+    unregistered is the one rejection the CLI can fix on the miner's
+    behalf. Everything here pins that it fixes ONLY that case, and only
+    against a live cost the miner has seen.
+    """
+
+    def _run(
+        self,
+        good_tar: Path,
+        monkeypatch,
+        *,
+        checks: list[UploadCheckResponse],
+        isatty: bool = True,
+        **arg_overrides,
+    ):
+        monkeypatch.setenv("NETUID", "118")
+        client = MagicMock()
+        client.post_upload_check.side_effect = checks
+        client.get_eval_pricing.return_value = _pricing()
+        client.post_upload_agent.return_value = _upload_response()
+        fake_handle = MagicMock(hotkey_ss58=HOTKEY, coldkey_name="miner")
+
+        stdin = MagicMock()
+        stdin.isatty.return_value = isatty
+
+        with (
+            patch("ditto.miner_cli.commands.upload.sys.stdin", stdin),
+            patch(
+                "ditto.miner_cli.commands.upload.load_wallet",
+                return_value=(fake_handle, MagicMock()),
+            ),
+            patch(
+                "ditto.miner_cli.commands.upload.run_preflight",
+                return_value=_good_preflight(),
+            ),
+            patch(
+                "ditto.miner_cli.commands.upload.sign_upload_payload",
+                return_value="cd" * 64,
+            ),
+            patch(
+                "ditto.miner_cli.commands.upload.submit_eval_payment",
+                return_value=_payment_receipt(),
+            ),
+            patch(
+                "ditto.miner_cli.commands.upload.ApiClient",
+                _patch_api_client(client),
+            ),
+            patch(
+                "ditto.miner_cli.commands.upload.quote_registration",
+                return_value=arg_overrides.pop("quote", _quote()),
+            ) as quote,
+            patch(
+                "ditto.miner_cli.commands.upload.submit_registration",
+                return_value=412,
+            ) as register,
+            patch(
+                "ditto.miner_cli.commands.upload.confirm_registration",
+                side_effect=arg_overrides.pop("confirm_side_effect", None),
+            ) as confirm,
+        ):
+            rc = run(make_args(good_tar, **arg_overrides))
+        return rc, client, quote, register, confirm
+
+    def test_registers_then_continues_to_upload(
+        self, good_tar: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        rc, client, quote, register, _ = self._run(
+            good_tar, monkeypatch, checks=[_unregistered_check(), _ok_check()]
+        )
+
+        assert rc == 0
+        quote.assert_called_once()
+        assert quote.call_args.kwargs["netuid"] == 118
+        register.assert_called_once()
+        # The amount the miner confirmed is the ceiling carried into submission.
+        assert register.call_args.kwargs["confirmed_recycle_rao"] == 500_000
+        # Re-checked after registering, then the upload proceeded.
+        assert client.post_upload_check.call_count == 2
+        client.post_upload_agent.assert_called_once()
+        err = capsys.readouterr().err
+        assert "registered on netuid 118: uid 412" in err
+        assert "continuing upload" in err
+
+    def test_never_registers_when_another_rejection_also_blocks(
+        self, good_tar: Path, monkeypatch
+    ) -> None:
+        rc, client, quote, register, _ = self._run(
+            good_tar, monkeypatch, checks=[_multi_rejected_check()]
+        )
+
+        assert rc == 1
+        quote.assert_not_called()
+        register.assert_not_called()
+        assert client.post_upload_check.call_count == 1
+
+    def test_no_register_flag_keeps_the_old_dead_end(
+        self, good_tar: Path, monkeypatch
+    ) -> None:
+        rc, _, quote, register, _ = self._run(
+            good_tar,
+            monkeypatch,
+            checks=[_unregistered_check()],
+            no_register=True,
+        )
+
+        assert rc == 1
+        quote.assert_not_called()
+        register.assert_not_called()
+
+    def test_non_interactive_without_register_flag_refuses_to_burn(
+        self, good_tar: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        rc, _, quote, register, _ = self._run(
+            good_tar,
+            monkeypatch,
+            checks=[_unregistered_check()],
+            isatty=False,
+        )
+
+        assert rc == 1
+        quote.assert_called_once()
+        register.assert_not_called()
+        err = capsys.readouterr().err
+        assert "--register" in err
+        assert "btcli subnets register --netuid 118" in err
+
+    def test_register_flag_pre_authorizes_non_interactive_run(
+        self, good_tar: Path, monkeypatch
+    ) -> None:
+        rc, _, _, register, confirm = self._run(
+            good_tar,
+            monkeypatch,
+            checks=[_unregistered_check(), _ok_check()],
+            isatty=False,
+            register=True,
+        )
+
+        assert rc == 0
+        register.assert_called_once()
+        assert confirm.call_args.kwargs["skip"] is True
+
+    def test_yes_alone_does_not_skip_the_registration_prompt(
+        self, good_tar: Path, monkeypatch
+    ) -> None:
+        """``--yes`` covers the eval fee only; the recycle cost is separate."""
+        rc, _, _, _, confirm = self._run(
+            good_tar,
+            monkeypatch,
+            checks=[_unregistered_check(), _ok_check()],
+            yes=True,
+        )
+
+        assert rc == 0
+        assert confirm.call_args.kwargs["skip"] is False
+
+    def test_declined_prompt_exits_two_without_registering(
+        self, good_tar: Path, monkeypatch
+    ) -> None:
+        rc, _, _, register, _ = self._run(
+            good_tar,
+            monkeypatch,
+            checks=[_unregistered_check()],
+            confirm_side_effect=RegistrationCancelledError(
+                "registration cancelled (response='n')"
+            ),
+        )
+
+        assert rc == 2
+        register.assert_not_called()
+
+    def test_unaffordable_quote_reports_shortfall_and_does_not_submit(
+        self, good_tar: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        rc, _, _, register, confirm = self._run(
+            good_tar,
+            monkeypatch,
+            checks=[_unregistered_check()],
+            quote=_quote(recycle_rao=5_000_000_000, balance_rao=1_000_000_000),
+        )
+
+        assert rc == 1
+        confirm.assert_not_called()
+        register.assert_not_called()
+        assert "4000000000 rao short" in capsys.readouterr().err
+
+    def test_registration_that_does_not_unblock_still_fails(
+        self, good_tar: Path, monkeypatch
+    ) -> None:
+        """A second rejection after registering is real and must not be eaten."""
+        rc, client, _, register, _ = self._run(
+            good_tar,
+            monkeypatch,
+            checks=[_unregistered_check(), _rejected_check()],
+        )
+
+        assert rc == 1
+        register.assert_called_once()
+        assert client.post_upload_check.call_count == 2
+        client.post_upload_agent.assert_not_called()
+
+    def test_declining_by_flag_still_prints_the_btcli_command(
+        self, good_tar: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        rc, _, _, _, _ = self._run(
+            good_tar,
+            monkeypatch,
+            checks=[_unregistered_check()],
+            no_register=True,
+        )
+
+        assert rc == 1
+        assert (
+            "btcli subnets register --netuid 118 --wallet-name miner "
+            "--hotkey default" in capsys.readouterr().err
+        )
+
+    def test_multi_code_rejection_still_prints_the_btcli_command(
+        self, good_tar: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        rc, _, _, _, _ = self._run(
+            good_tar, monkeypatch, checks=[_multi_rejected_check()]
+        )
+
+        assert rc == 1
+        assert "btcli subnets register --netuid 118" in capsys.readouterr().err
+
+
+class TestRegistrationVisibilityLag:
+    """The chain and the platform do not agree the instant TAO is recycled.
+
+    `/upload/check` resolves 1101 from Pylon's cached recent-neurons
+    snapshot, so a registration that is already final on chain keeps
+    answering 1101 for a while. Giving up on the first re-check sends the
+    miner away from a submission that is seconds from working, after the
+    recycle amount is already spent.
+    """
+
+    def _run(
+        self,
+        good_tar: Path,
+        monkeypatch,
+        *,
+        checks: list[UploadCheckResponse],
+        quote_error: Exception | None = None,
+        **arg_overrides,
+    ):
+        monkeypatch.setenv("NETUID", "118")
+        # No real waiting; the delays are what they are.
+        monkeypatch.setattr(
+            "ditto.miner_cli.commands.upload.time.sleep", lambda _: None
+        )
+        client = MagicMock()
+        client.post_upload_check.side_effect = checks
+        client.get_eval_pricing.return_value = _pricing()
+        client.post_upload_agent.return_value = _upload_response()
+        fake_handle = MagicMock(hotkey_ss58=HOTKEY, coldkey_name="miner")
+        stdin = MagicMock()
+        stdin.isatty.return_value = True
+
+        quote_kwargs = (
+            {"side_effect": quote_error} if quote_error else {"return_value": _quote()}
+        )
+
+        with (
+            patch("ditto.miner_cli.commands.upload.sys.stdin", stdin),
+            patch(
+                "ditto.miner_cli.commands.upload.load_wallet",
+                return_value=(fake_handle, MagicMock()),
+            ),
+            patch(
+                "ditto.miner_cli.commands.upload.run_preflight",
+                return_value=_good_preflight(),
+            ),
+            patch(
+                "ditto.miner_cli.commands.upload.sign_upload_payload",
+                return_value="cd" * 64,
+            ),
+            patch(
+                "ditto.miner_cli.commands.upload.submit_eval_payment",
+                return_value=_payment_receipt(),
+            ),
+            patch(
+                "ditto.miner_cli.commands.upload.ApiClient", _patch_api_client(client)
+            ),
+            patch(
+                "ditto.miner_cli.commands.upload.quote_registration", **quote_kwargs
+            ) as quote,
+            patch(
+                "ditto.miner_cli.commands.upload.submit_registration", return_value=37
+            ) as register,
+            patch("ditto.miner_cli.commands.upload.confirm_registration"),
+        ):
+            rc = run(make_args(good_tar, **arg_overrides))
+        return rc, client, quote, register
+
+    def test_waits_out_the_snapshot_lag_then_uploads(
+        self, good_tar: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        rc, client, _, register = self._run(
+            good_tar,
+            monkeypatch,
+            checks=[
+                _unregistered_check(),  # initial
+                _unregistered_check(),  # immediately after registering
+                _unregistered_check(),  # snapshot still stale
+                _ok_check(),  # platform catches up
+            ],
+        )
+
+        assert rc == 0
+        register.assert_called_once()
+        client.post_upload_agent.assert_called_once()
+        err = capsys.readouterr().err
+        assert "waiting for the platform to observe the registration" in err
+        assert "platform observed the registration after 2/8 checks" in err
+
+    def test_gives_up_without_telling_the_miner_to_pay_again(
+        self, good_tar: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        rc, _, _, register = self._run(
+            good_tar,
+            monkeypatch,
+            # Initial + the post-registration check + every retry.
+            checks=[_unregistered_check()] * 12,
+        )
+
+        assert rc == 1
+        register.assert_called_once()
+        err = capsys.readouterr().err
+        assert "registered on chain as uid 37" in err
+        assert "do NOT register again" in err
+        assert "Re-run this exact upload command" in err
+        # The btcli hint would read as "register again"; it must not appear
+        # on a path where registration already succeeded.
+        assert "btcli subnets register" not in err
+
+    def test_a_different_rejection_is_not_waited_on(
+        self, good_tar: Path, monkeypatch
+    ) -> None:
+        """Waiting cannot turn a bad signature into a good one."""
+        rc, client, _, register = self._run(
+            good_tar,
+            monkeypatch,
+            checks=[_unregistered_check(), _rejected_check()],
+        )
+
+        assert rc == 1
+        register.assert_called_once()
+        # Returned on the first re-check; no polling.
+        assert client.post_upload_check.call_count == 2
+
+    def test_already_registered_on_chain_waits_instead_of_failing(
+        self, good_tar: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The state a re-run lands in during the lag window.
+
+        The chain says registered, the platform still says 1101. Burning
+        again would be the real mistake, and so would exiting.
+        """
+        rc, _, _, register = self._run(
+            good_tar,
+            monkeypatch,
+            checks=[_unregistered_check(), _unregistered_check(), _ok_check()],
+            quote_error=RegistrationNotNeededError(
+                "hotkey is already registered on netuid 118"
+            ),
+        )
+
+        assert rc == 0
+        register.assert_not_called()
+        err = capsys.readouterr().err
+        assert "chain already reports" in err
+        assert "no TAO was recycled" in err
+
+
+class TestRegistrationTargetBinding:
+    """Registration binds to the platform's target, never to a local guess.
+
+    1101 is issued against the netuid the PLATFORM is bound to. Registering
+    against whatever the CLI is locally configured with is only correct
+    while the two agree, and the already-registered guard cannot detect the
+    disagreement: a hotkey unregistered on both subnets looks identical
+    either way, so the burn lands on the wrong subnet and the check still
+    fails.
+    """
+
+    def _run(self, good_tar: Path, monkeypatch, *, check, **arg_overrides):
+        monkeypatch.setenv("NETUID", "118")
+        monkeypatch.setattr(
+            "ditto.miner_cli.commands.upload.time.sleep", lambda _: None
+        )
+        client = MagicMock()
+        client.post_upload_check.side_effect = [check, _ok_check()]
+        client.get_eval_pricing.return_value = _pricing()
+        client.post_upload_agent.return_value = _upload_response()
+        fake_handle = MagicMock(hotkey_ss58=HOTKEY, coldkey_name="miner")
+        stdin = MagicMock()
+        stdin.isatty.return_value = True
+
+        with (
+            patch("ditto.miner_cli.commands.upload.sys.stdin", stdin),
+            patch(
+                "ditto.miner_cli.commands.upload.load_wallet",
+                return_value=(fake_handle, MagicMock()),
+            ),
+            patch(
+                "ditto.miner_cli.commands.upload.run_preflight",
+                return_value=_good_preflight(),
+            ),
+            patch(
+                "ditto.miner_cli.commands.upload.sign_upload_payload",
+                return_value="cd" * 64,
+            ),
+            patch(
+                "ditto.miner_cli.commands.upload.submit_eval_payment",
+                return_value=_payment_receipt(),
+            ),
+            patch(
+                "ditto.miner_cli.commands.upload.ApiClient", _patch_api_client(client)
+            ),
+            patch(
+                "ditto.miner_cli.commands.upload.quote_registration",
+                return_value=_quote(),
+            ) as quote,
+            patch(
+                "ditto.miner_cli.commands.upload.submit_registration", return_value=37
+            ) as register,
+            patch("ditto.miner_cli.commands.upload.confirm_registration"),
+        ):
+            rc = run(make_args(good_tar, **arg_overrides))
+        return rc, quote, register
+
+    def test_platform_netuid_is_used_over_the_local_one(
+        self, good_tar: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        rc, quote, register = self._run(
+            good_tar, monkeypatch, check=_unregistered_check(netuid=42)
+        )
+
+        assert rc == 0
+        assert quote.call_args.kwargs["netuid"] == 42
+        assert register.call_args.kwargs["netuid"] == 42
+        assert "registering on netuid 42" in capsys.readouterr().err
+
+    def test_a_server_that_names_no_netuid_cannot_trigger_a_burn(
+        self, good_tar: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        rc, quote, register = self._run(
+            good_tar, monkeypatch, check=_unregistered_check(netuid=None)
+        )
+
+        assert rc == 1
+        quote.assert_not_called()
+        register.assert_not_called()
+        err = capsys.readouterr().err
+        assert "did not report which netuid" in err
+        assert "No TAO was recycled" in err
+        assert "btcli subnets register" in err
+
+    def test_a_different_chain_is_refused(
+        self, good_tar: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The right netuid on the wrong chain is still the wrong target."""
+        rc, quote, register = self._run(
+            good_tar,
+            monkeypatch,
+            check=_unregistered_check(subtensor_network="finney"),
+        )
+
+        assert rc == 1
+        quote.assert_not_called()
+        register.assert_not_called()
+        err = capsys.readouterr().err
+        assert "reads registration from subtensor 'finney'" in err
+        assert "No TAO was recycled" in err

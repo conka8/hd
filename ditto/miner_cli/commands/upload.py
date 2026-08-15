@@ -5,7 +5,9 @@ Glues every other module together. Walk:
 1. Load wallet (coldkey + hotkey)
 2. Run tar pre-flight; abort on any real check failing
 3. Sign ``f"{hotkey}:{sha256}"``
-4. POST /upload/check; abort on a definitive rejection
+4. POST /upload/check; abort on a definitive rejection. When the sole
+   rejection is 1101 (hotkey not registered), offer to recycle the live
+   registration cost, then re-check and continue
 5. Verify the selected coldkey owns the hotkey on chain
 6. Use the TAO fee + destination atomically bound to the admission reservation
    (fall back to GET /upload/eval-pricing during an older-server rollout)
@@ -17,7 +19,7 @@ Glues every other module together. Walk:
 Exit codes:
 - 0 success (agent_id printed to stdout)
 - 1 generic error (pre-flight failed, sig failed, API rejected, chain failure)
-- 2 payment cancelled at confirm prompt
+- 2 payment or registration cancelled at a confirm prompt
 """
 
 from __future__ import annotations
@@ -28,17 +30,20 @@ import os
 import re
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from ditto.api_models import (
     EvalPricingResponse,
     UploadAgentResponse,
     UploadCheckRequest,
+    UploadCheckResponse,
 )
 from ditto.miner_cli.api_client import ApiClient
 from ditto.miner_cli.commands.verify import _print_result
-from ditto.miner_cli.confirm import confirm_payment
+from ditto.miner_cli.confirm import confirm_payment, confirm_registration
 from ditto.miner_cli.errors import (
     ApiResponseError,
     MinerCliError,
@@ -48,13 +53,21 @@ from ditto.miner_cli.errors import (
     PaymentRecoveryExpiredError,
     PaymentSubmissionError,
     PreCheckRejectedError,
+    RegistrationCancelledError,
+    RegistrationNotNeededError,
+    RegistrationOutcomeUnknownError,
+    RegistrationSubmissionError,
     SubmissionCooldownError,
     TarStructureError,
     TransientApiError,
     UploadAgentRejectedError,
     WalletNotFoundError,
 )
-from ditto.miner_cli.models import PaymentReceipt, PendingUploadPayment
+from ditto.miner_cli.models import (
+    PaymentReceipt,
+    PendingUploadPayment,
+    WalletHandle,
+)
 from ditto.miner_cli.network import resolve_network
 from ditto.miner_cli.payment import preflight_payment_signer, submit_eval_payment
 from ditto.miner_cli.preferences import (
@@ -68,14 +81,30 @@ from ditto.miner_cli.preferences import (
     save_agent_wallet,
     save_pending_payment,
 )
+from ditto.miner_cli.registration import quote_registration, submit_registration
 from ditto.miner_cli.signing import sign_upload_payload
 from ditto.miner_cli.tar_validator import run_preflight
 from ditto.miner_cli.wallet import load_wallet
+
+if TYPE_CHECKING:
+    import bittensor
 
 logger = logging.getLogger(__name__)
 
 _BLOCK_HASH_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
 _UPLOAD_RETRY_DELAYS_S = (2.0, 4.0, 8.0, 16.0, 30.0, 30.0)
+
+# How long to keep re-checking after a finalized registration. The platform
+# answers 1101 from a cached metagraph snapshot rather than from the chain
+# (ditto.chain.client.ChainClient.get_recent_neurons), so a registration that
+# is already final on chain stays invisible to /upload/check for a while. That
+# snapshot's refresh period is not a contract the CLI can read, so this polls
+# rather than sleeping a fixed guess. ~4 minutes total.
+_REGISTRATION_VISIBILITY_DELAYS_S = (5.0, 10.0, 15.0, 20.0, 30.0, 30.0, 30.0, 30.0)
+
+# Mirrors ditto.api_server.endpoints.upload.ERROR_CODE_HOTKEY_NOT_REGISTERED.
+# The only pre-check rejection the CLI can resolve on the miner's behalf.
+_ERROR_CODE_HOTKEY_NOT_REGISTERED = 1101
 
 
 def add_subparser(
@@ -148,6 +177,28 @@ def add_subparser(
         help="Skip interactive payment confirmation. For scripted use.",
     )
     parser.add_argument(
+        "--register",
+        dest="register",
+        action="store_true",
+        help=(
+            "Pre-authorize recycling the live registration cost if this "
+            "hotkey is not yet registered on the subnet, skipping the "
+            "registration prompt. For scripted use. Deliberately NOT implied "
+            "by --yes: --yes covers the platform-quoted eval fee, while the "
+            "recycle amount is a separate chain-quoted cost with no ceiling. "
+            "Without this flag an interactive run still offers to register."
+        ),
+    )
+    parser.add_argument(
+        "--no-register",
+        dest="no_register",
+        action="store_true",
+        help=(
+            "Never offer to register. An unregistered hotkey fails the "
+            "pre-check exactly as before, printing the btcli command."
+        ),
+    )
+    parser.add_argument(
         "--allow-identical-rescore",
         dest="allow_identical_rescore",
         action="store_true",
@@ -198,13 +249,16 @@ def run(args: argparse.Namespace) -> int:
             subtensor_network=network.subtensor_network,
             chain_endpoint=getattr(args, "chain_endpoint", None) or None,
         )
-    except PaymentCancelledError as e:
+    except (PaymentCancelledError, RegistrationCancelledError) as e:
         print(f"cancelled: {e}", file=sys.stderr)
         return 2
     except (
         TarStructureError,
         WalletNotFoundError,
         PreCheckRejectedError,
+        RegistrationSubmissionError,
+        RegistrationNotNeededError,
+        RegistrationOutcomeUnknownError,
         UploadAgentRejectedError,
         PaymentSubmissionError,
         PaymentFinalizationTimeoutError,
@@ -352,13 +406,40 @@ def _run_upload(
                 receipt_source = None
                 reassigned_payment = None
         if not check_response.ok:
-            for code, msg in zip(
-                check_response.error_codes, check_response.messages, strict=True
-            ):
-                print(f"  pre-check rejection {code}: {msg}", file=sys.stderr)
-            raise PreCheckRejectedError(
-                f"pre-check rejected: codes={check_response.error_codes}"
-            )
+            _print_rejections(check_response)
+            if _registration_would_unblock(args, check_response.error_codes):
+                registered_uid = _register_hotkey(
+                    args=args,
+                    handle=handle,
+                    live_wallet=live_wallet,
+                    subtensor_network=subtensor_network,
+                    chain_endpoint=chain_endpoint,
+                    check_response=check_response,
+                )
+                # The platform resolves registration from a cached metagraph
+                # snapshot, not from the chain directly, so a finalized
+                # registration is not visible to /upload/check immediately.
+                check_response = _await_platform_registration(
+                    check=lambda: _check(receipt),
+                    hotkey_ss58=handle.hotkey_ss58,
+                    registered_uid=registered_uid,
+                )
+                if not check_response.ok:
+                    _print_rejections(check_response)
+            if not check_response.ok:
+                if _ERROR_CODE_HOTKEY_NOT_REGISTERED in check_response.error_codes:
+                    # Reached when registration was declined by flag, or when
+                    # another rejection rode alongside 1101. Either way the
+                    # miner still has to register eventually, so hand them the
+                    # command rather than only the code.
+                    print(
+                        f"\nto register this hotkey:\n"
+                        f"{_btcli_register_hint(args, subtensor_network)}",
+                        file=sys.stderr,
+                    )
+                raise PreCheckRejectedError(
+                    f"pre-check rejected: codes={check_response.error_codes}"
+                )
         if check_response.admission_token is None:
             raise PreCheckRejectedError(
                 "platform did not reserve a pre-payment submission slot; "
@@ -581,6 +662,297 @@ def _run_upload(
         file=sys.stderr,
     )
     return 0
+
+
+def _print_rejections(check_response: UploadCheckResponse) -> None:
+    """Print each parallel (code, message) pair from a failed pre-check."""
+    for code, msg in zip(
+        check_response.error_codes, check_response.messages, strict=True
+    ):
+        print(f"  pre-check rejection {code}: {msg}", file=sys.stderr)
+
+
+def _await_platform_registration(
+    *,
+    check: Callable[[], UploadCheckResponse],
+    hotkey_ss58: str,
+    registered_uid: int | None,
+) -> UploadCheckResponse:
+    """Re-check until the platform observes an on-chain registration.
+
+    The chain and the platform do not agree instantly. ``/upload/check``
+    resolves registration from Pylon's cached recent-neurons snapshot, so a
+    registration that has already finalized on chain still answers 1101 for
+    some time afterward. Checking once and giving up sends the miner away
+    from a submission that is seconds from working, having already spent the
+    recycle amount.
+
+    Only 1101 is waited on. Any other rejection is returned immediately --
+    those do not become true by waiting.
+
+    Args:
+        check: Zero-arg callable re-running the same ``/upload/check``.
+        hotkey_ss58: Hotkey being waited on, for the messages.
+        registered_uid: uid from this run's registration, when known.
+
+    Returns:
+        The first passing response, or the last non-1101 rejection.
+
+    Raises:
+        PreCheckRejectedError: The platform never observed the registration
+            within the budget. The message states that registration DID
+            succeed so the miner does not pay to register a second time.
+    """
+    response = check()
+    if response.ok or list(response.error_codes) != [_ERROR_CODE_HOTKEY_NOT_REGISTERED]:
+        return response
+
+    print(
+        "waiting for the platform to observe the registration "
+        "(it reads a cached metagraph snapshot, so this lags the chain)...",
+        file=sys.stderr,
+    )
+    for attempt, delay in enumerate(_REGISTRATION_VISIBILITY_DELAYS_S, start=1):
+        time.sleep(delay)
+        response = check()
+        if response.ok:
+            print(
+                f"platform observed the registration after "
+                f"{attempt}/{len(_REGISTRATION_VISIBILITY_DELAYS_S)} checks",
+                file=sys.stderr,
+            )
+            return response
+        if list(response.error_codes) != [_ERROR_CODE_HOTKEY_NOT_REGISTERED]:
+            return response
+        print(
+            f"  still not visible; re-checking "
+            f"({attempt}/{len(_REGISTRATION_VISIBILITY_DELAYS_S)})",
+            file=sys.stderr,
+        )
+
+    uid_note = f" as uid {registered_uid}" if registered_uid is not None else ""
+    raise PreCheckRejectedError(
+        f"hotkey {hotkey_ss58} is registered on chain{uid_note}, but the "
+        f"platform still reports it as unregistered after "
+        f"{int(sum(_REGISTRATION_VISIBILITY_DELAYS_S))}s.\n"
+        "The registration succeeded and the recycled TAO is already spent -- "
+        "do NOT register again. Re-run this exact upload command in a few "
+        "minutes; it will skip registration and go straight to payment.\n"
+        "If it persists, the platform may be bound to a different netuid "
+        "than the CLI (env NETUID) or a different network (--network)."
+    )
+
+
+def _resolve_netuid() -> int:
+    """Locally configured netuid, matching ``ditto attest``.
+
+    Display only. Never the target of a registration: see
+    :func:`_authoritative_netuid`.
+    """
+    from ditto.miner_cli.commands.attest import DEFAULT_NETUID
+
+    return int(os.environ.get("NETUID", str(DEFAULT_NETUID)))
+
+
+def _authoritative_netuid(
+    *,
+    check_response: UploadCheckResponse,
+    args: argparse.Namespace,
+    subtensor_network: str,
+) -> int:
+    """Return the netuid the platform itself reports, or refuse to register.
+
+    The 1101 rejection is issued against the netuid the *platform* is bound
+    to. Registering against the netuid the *CLI* happens to be configured
+    with is only correct while the two agree, and nothing in the flow proves
+    they do: when the hotkey is unregistered on both, the already-registered
+    guard sees an ordinary unregistered hotkey and waves the burn through
+    onto the wrong subnet.
+
+    So the target is taken from the response or not at all. Falling back to
+    the local value is precisely the behavior that spends TAO in the wrong
+    place, so a server too old to report its binding gets the manual path.
+
+    Raises:
+        RegistrationSubmissionError: The response named no netuid, or named
+            a subtensor network other than the one this run would sign on.
+    """
+    manual = _btcli_register_hint(args, subtensor_network)
+    if check_response.netuid is None:
+        raise RegistrationSubmissionError(
+            "the platform did not report which netuid it is bound to, so the "
+            "CLI cannot know where to register. Registering against the "
+            "locally configured netuid could recycle TAO on a subnet the "
+            "platform does not watch. No TAO was recycled.\n"
+            f"Register manually once you have confirmed the target:\n{manual}"
+        )
+
+    reported_network = check_response.subtensor_network
+    if reported_network is not None and reported_network != subtensor_network:
+        raise RegistrationSubmissionError(
+            f"the platform reads registration from subtensor "
+            f"{reported_network!r} but this run would register on "
+            f"{subtensor_network!r}. The right netuid on the wrong chain is "
+            f"still the wrong target. Re-run with --network matching the "
+            f"platform. No TAO was recycled."
+        )
+
+    local = _resolve_netuid()
+    if check_response.netuid != local:
+        # Not fatal: the platform is authoritative and the CLI follows it.
+        # Worth saying out loud, because the local value is what every other
+        # netuid-taking command in this CLI would have used.
+        print(
+            f"note: registering on netuid {check_response.netuid} as reported "
+            f"by the platform, not the locally configured {local}.",
+            file=sys.stderr,
+        )
+    return check_response.netuid
+
+
+def _btcli_register_hint(
+    args: argparse.Namespace, subtensor_network: str, *, netuid: int | None = None
+) -> str:
+    """The equivalent btcli command, with this run's wallet already filled in.
+
+    Printed on every path where the CLI will not or cannot register, so a
+    miner is never left holding only an error code.
+    """
+    return (
+        f"  btcli subnets register --netuid {netuid or _resolve_netuid()} "
+        f"--wallet-name {args.coldkey_name} --hotkey {args.hotkey_name} "
+        f"--network {subtensor_network}"
+    )
+
+
+def _registration_would_unblock(
+    args: argparse.Namespace, error_codes: list[int]
+) -> bool:
+    """``True`` when registering is the whole remaining fix.
+
+    Deliberately requires 1101 to be the *only* rejection. A hotkey can be
+    unregistered AND have a bad signature, or be inside an owner cooldown;
+    registering then recycles real TAO and lands on the same wall. The
+    conservative test costs a second upload run in the rare multi-code case
+    and cannot burn TAO for nothing.
+    """
+    if getattr(args, "no_register", False):
+        return False
+    return list(error_codes) == [_ERROR_CODE_HOTKEY_NOT_REGISTERED]
+
+
+def _register_hotkey(
+    *,
+    args: argparse.Namespace,
+    handle: WalletHandle,
+    live_wallet: bittensor.Wallet,
+    subtensor_network: str,
+    chain_endpoint: str | None,
+    check_response: UploadCheckResponse,
+) -> int | None:
+    """Quote, confirm, and submit a burned registration, then continue.
+
+    The target comes from the platform's own response, never from local
+    configuration. Registering against a locally chosen netuid can recycle
+    TAO on a subnet the platform does not watch, and the already-registered
+    guard cannot catch it: a hotkey unregistered on both subnets looks
+    identical either way. A server that does not report its target is
+    treated as unregisterable rather than guessed at.
+
+    Every failure mode ends by printing the equivalent btcli command, so a
+    miner the CLI cannot register is never left without the next step.
+
+    Returns:
+        The uid assigned by this run's registration, or ``None`` when the
+        hotkey was already registered on chain or the uid could not be read.
+
+    Raises:
+        RegistrationCancelledError: The miner declined the prompt.
+        RegistrationSubmissionError: The platform did not name a target, the
+            target disagrees with this run's chain, or quoting failed.
+        RegistrationOutcomeUnknownError: Submission left chain state
+            ambiguous.
+    """
+    netuid = _authoritative_netuid(
+        check_response=check_response,
+        args=args,
+        subtensor_network=subtensor_network,
+    )
+    btcli_hint = _btcli_register_hint(args, subtensor_network, netuid=netuid)
+
+    try:
+        quote = quote_registration(
+            live_wallet=live_wallet,
+            hotkey_ss58=handle.hotkey_ss58,
+            coldkey_name=handle.coldkey_name,
+            netuid=netuid,
+            subtensor_network=subtensor_network,
+            chain_endpoint=chain_endpoint,
+        )
+    except RegistrationNotNeededError:
+        # Not an error here. The platform said 1101 and the chain says
+        # registered, which is the ordinary state right after registering:
+        # the platform's cached snapshot has not caught up yet. Burning again
+        # would be the actual mistake. Let the caller wait it out.
+        print(
+            f"chain already reports {handle.hotkey_ss58} registered on netuid "
+            f"{netuid}; no TAO was recycled.",
+            file=sys.stderr,
+        )
+        return None
+    except RegistrationSubmissionError as e:
+        print(f"\n{e}\nTo register manually:\n{btcli_hint}", file=sys.stderr)
+        raise
+
+    if not quote.affordable:
+        shortfall = quote.recycle_rao - quote.balance_rao
+        raise RegistrationSubmissionError(
+            f"coldkey {quote.coldkey_name} holds {quote.balance_rao} rao but "
+            f"registration on netuid {netuid} costs {quote.recycle_rao} rao "
+            f"({shortfall} rao short, before the transaction fee). "
+            f"No TAO was recycled."
+        )
+
+    pre_authorized = bool(getattr(args, "register", False))
+    if not pre_authorized and not sys.stdin.isatty():
+        raise RegistrationSubmissionError(
+            f"hotkey is not registered on netuid {netuid} and this is not an "
+            f"interactive terminal, so the registration cost cannot be "
+            f"confirmed. Re-run with --register to pre-authorize recycling "
+            f"the live cost, or register manually:\n{btcli_hint}"
+        )
+
+    confirm_registration(quote=quote, skip=pre_authorized)
+
+    print(
+        f"submitting registration on subtensor={subtensor_network}...",
+        file=sys.stderr,
+    )
+    try:
+        uid = submit_registration(
+            live_wallet=live_wallet,
+            hotkey_ss58=handle.hotkey_ss58,
+            netuid=netuid,
+            subtensor_network=subtensor_network,
+            confirmed_recycle_rao=quote.recycle_rao,
+            chain_endpoint=chain_endpoint,
+        )
+    except RegistrationOutcomeUnknownError as e:
+        # Deliberately no btcli hint: this path cannot say whether TAO was
+        # already recycled, and a register command here reads as "try again".
+        print(f"\n{e}", file=sys.stderr)
+        raise
+    except RegistrationSubmissionError as e:
+        print(f"\n{e}\nTo register manually:\n{btcli_hint}", file=sys.stderr)
+        raise
+
+    print(
+        f"registered on netuid {netuid}"
+        + (f": uid {uid}" if uid is not None else "")
+        + "\ncontinuing upload...",
+        file=sys.stderr,
+    )
+    return uid
 
 
 def _offer_owner_link(
