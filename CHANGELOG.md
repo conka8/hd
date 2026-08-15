@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.68.11 (2026-08-15)
+
+### Bug Fixes
+
+- **platform**: Show family retest evidence
+  ([#746](https://github.com/ditto-assistant/ditto-subnet/pull/746),
+  [`f974c2f`](https://github.com/ditto-assistant/ditto-subnet/commit/f974c2f56d984423d8e3250e842320d82aea5406))
+
+
 ## v0.68.10 (2026-08-15)
 
 ### Bug Fixes
