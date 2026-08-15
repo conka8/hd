@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.68.20 (2026-08-15)
+
+### Bug Fixes
+
+- **platform**: Show the efficiency tie-break as a direction
+  ([#832](https://github.com/ditto-assistant/ditto-subnet/pull/832),
+  [`d8ccd72`](https://github.com/ditto-assistant/ditto-subnet/commit/d8ccd7296fc2d3bfbee969cb3b513b5d45b786c2))
+
+- **release**: Centralize post-merge verification
+  ([#831](https://github.com/ditto-assistant/ditto-subnet/pull/831),
+  [`7d50a83`](https://github.com/ditto-assistant/ditto-subnet/commit/7d50a83b807670edef05323ae42c09656cc761c1))
+
+
 ## v0.68.19 (2026-08-15)
 
 ### Bug Fixes
