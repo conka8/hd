@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.65.2 (2026-08-15)
+
+### Bug Fixes
+
+- **release**: Run semantic release without Docker
+  ([#791](https://github.com/ditto-assistant/ditto-subnet/pull/791),
+  [`1bbe2f2`](https://github.com/ditto-assistant/ditto-subnet/commit/1bbe2f2eac5220d4a659e0be26de7b712781864e))
+
+
 ## v0.65.1 (2026-08-15)
 
 ### Bug Fixes
