@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v0.71.0 (2026-08-15)
+
+### Bug Fixes
+
+- **scoring**: Isolate LongMem harness case failures
+  ([#847](https://github.com/ditto-assistant/ditto-subnet/pull/847),
+  [`b2b607d`](https://github.com/ditto-assistant/ditto-subnet/commit/b2b607dbcded26e20d76849a1706bc1aa7f8d8c1))
+
+### Features
+
+- **backroom**: Add inference runtime diagnostics
+  ([#848](https://github.com/ditto-assistant/ditto-subnet/pull/848),
+  [`ecdd681`](https://github.com/ditto-assistant/ditto-subnet/commit/ecdd681f582144cc330cbd96e916a16523907772))
+
+- **dashboard**: Surface managed updater progress
+  ([#849](https://github.com/ditto-assistant/ditto-subnet/pull/849),
+  [`430aad9`](https://github.com/ditto-assistant/ditto-subnet/commit/430aad96fd86cadf026a438e62fa24edbbd0308a))
+
+
 ## v0.70.0 (2026-08-15)
 
 ### Bug Fixes
