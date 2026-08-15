@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.75.2 (2026-08-15)
+
+### Bug Fixes
+
+- **dittobench**: Run cross-encoder rerank on the blocking pool
+  ([#853](https://github.com/ditto-assistant/ditto-subnet/pull/853),
+  [`5addaaa`](https://github.com/ditto-assistant/ditto-subnet/commit/5addaaad399fd9474a316a8cc28f91e57d94eeaa))
+
+
 ## v0.75.1 (2026-08-15)
 
 ### Bug Fixes
