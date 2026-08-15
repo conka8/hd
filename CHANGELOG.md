@@ -2,6 +2,45 @@
 
 <!-- version list -->
 
+## v0.69.0 (2026-08-15)
+
+### Bug Fixes
+
+- **dittobench**: Advertise executable bench v10
+  ([#841](https://github.com/ditto-assistant/ditto-subnet/pull/841),
+  [`cf6df30`](https://github.com/ditto-assistant/ditto-subnet/commit/cf6df306f546e045bbbbcfd54541fac83415b87e))
+
+- **dittobench**: Require model-backed v10 tool execution
+  ([#843](https://github.com/ditto-assistant/ditto-subnet/pull/843),
+  [`06908dd`](https://github.com/ditto-assistant/ditto-subnet/commit/06908ddcba53f40dd944a757f7fed4e1410a886e))
+
+- **platform**: Ship benchmark v10 rollout contract
+  ([#842](https://github.com/ditto-assistant/ditto-subnet/pull/842),
+  [`9956355`](https://github.com/ditto-assistant/ditto-subnet/commit/9956355617f5f29b229e43b9a1aefec293b10a58))
+
+### Features
+
+- **datagen**: Add state-dependent v10 tool routing
+  ([#837](https://github.com/ditto-assistant/ditto-subnet/pull/837),
+  [`74a2f43`](https://github.com/ditto-assistant/ditto-subnet/commit/74a2f437d52c5702df5bdd6921e9ad1a624f4732))
+
+- **datagen**: Define private bench v10 generator contract
+  ([#836](https://github.com/ditto-assistant/ditto-subnet/pull/836),
+  [`ca64cf9`](https://github.com/ditto-assistant/ditto-subnet/commit/ca64cf9b141c098265ea7b1cdc938b4b1837a39b))
+
+- **datagen**: Gate v10 computed memory exposure
+  ([#838](https://github.com/ditto-assistant/ditto-subnet/pull/838),
+  [`61d5bc3`](https://github.com/ditto-assistant/ditto-subnet/commit/61d5bc39abf90229f46f8e9c78da95a8d7106b54))
+
+- **dittobench**: Add private v10 deep-history profile
+  ([#839](https://github.com/ditto-assistant/ditto-subnet/pull/839),
+  [`d05ef0f`](https://github.com/ditto-assistant/ditto-subnet/commit/d05ef0fbef234d3fc780fcbed7499d355c83953d))
+
+- **dittobench**: Add private v10 qualification gate
+  ([#840](https://github.com/ditto-assistant/ditto-subnet/pull/840),
+  [`890fb8e`](https://github.com/ditto-assistant/ditto-subnet/commit/890fb8e293bf21634055f19a1a79525c9021fdc2))
+
+
 ## v0.68.21 (2026-08-15)
 
 ### Bug Fixes
