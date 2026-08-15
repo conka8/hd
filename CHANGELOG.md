@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v0.72.0 (2026-08-15)
+
+### Bug Fixes
+
+- **platform**: Count only admitted validator work
+  ([#854](https://github.com/ditto-assistant/ditto-subnet/pull/854),
+  [`586a2a6`](https://github.com/ditto-assistant/ditto-subnet/commit/586a2a6dc4de6c3eb3a6c4d0546513b20d7b829c))
+
+### Features
+
+- **dashboard**: Split operations into pipeline and fleet pages with compact slot lines
+  ([#852](https://github.com/ditto-assistant/ditto-subnet/pull/852),
+  [`d826138`](https://github.com/ditto-assistant/ditto-subnet/commit/d826138230154503c2e572262c33c46c12f154e5))
+
+
 ## v0.71.0 (2026-08-15)
 
 ### Bug Fixes
