@@ -833,11 +833,24 @@ class TestListEligibleLedger:
 # turns on the third decimal place of the decay.
 _WINNER_COMPOSITE = 0.90
 _WITHIN_BAND = 0.8999
-# 0.0007 behind the winner: inside the *dethrone* band and comfortably outside
-# the crown-anchor band. This is the gap that crowned white-bolt on 2026-08-13
-# while it had never once led the rival it outranked, and it is the whole reason
-# the two bands are separate numbers.
-_BEHIND_A_RIVAL = 0.8993
+# Two benchmark steps behind the winner: inside the *dethrone* band and outside
+# the crown-anchor band. This is the shape that crowned white-bolt on
+# 2026-08-13 while it had never once led the rival it outranked, and it is the
+# whole reason the two bands are separate numbers.
+#
+# Was 0.8993 -- 0.0007 back -- until the anchor floor was held to
+# MIN_RESOLVABLE_COMPOSITE_STEP. That original gap is *below* what bench v9 can
+# express (0.25/251 = 0.000996 per step), so no real ancestor can sit there:
+# the case it described was untestable in production and the distinction it
+# asserted was one the benchmark cannot make. At two steps the ancestor is
+# measurably behind, which is what "never led" has to mean to be enforceable.
+_BEHIND_A_RIVAL = 0.898
+# One real bench-v9 step behind the winner: 251 memory cases in half-point
+# steps, halved by the tool mean, is 0.25/251 = 0.000996 of composite. Spelled
+# as a literal rather than derived from MIN_RESOLVABLE_COMPOSITE_STEP so the
+# test asserts against the benchmark's actual resolution and keeps failing if
+# that constant is ever tuned below it.
+_ONE_STEP_BACK = 0.90 - 0.000996
 _OUTSIDE_BAND = 0.88
 
 
@@ -919,6 +932,110 @@ class TestCrownFirstSeen:
 
         assert row.crown_first_seen == matched_it_later
         assert row.fold_first_seen == matched_it_later
+
+    async def test_a_generation_the_owner_regressed_from_confers_no_seniority(
+        self, session: AsyncSession
+    ) -> None:
+        """The other direction, and the one a tighter band could never reach.
+
+        The owner peaks early, then its next generation scores *below* that
+        peak. Measuring the band from the family's best made the peak admit
+        itself unconditionally, so it kept handing its arrival time to a
+        generation defending a score the lineage had already lost — on
+        2026-08-14 a 0.995020 submission held the crown that way. Measuring from
+        the row's own score is what makes the peak stop counting: the owner is
+        no longer at it.
+        """
+        peaked_early = datetime(2026, 6, 8, 9, 0, tzinfo=UTC)
+        fell_back_later = datetime(2026, 6, 8, 18, 0, tzinfo=UTC)
+        await _seed_scored(
+            session,
+            miner=_MINER,
+            composite=_WINNER_COMPOSITE,
+            created_at=peaked_early,
+            n=MIN_ELIGIBLE_CASES,
+            name="peaked-early",
+        )
+        await _seed_scored(
+            session,
+            miner=_MINER,
+            composite=_BEHIND_A_RIVAL,
+            created_at=fell_back_later,
+            n=MIN_ELIGIBLE_CASES,
+            name="fell-back-later",
+        )
+
+        rows = await list_eligible_ledger(session, dedupe_owners=False)
+        by_arrival = {row.first_seen: row for row in rows}
+
+        # The regressed generation stands on its own arrival ...
+        assert by_arrival[fell_back_later].crown_first_seen == fell_back_later
+        assert by_arrival[fell_back_later].fold_first_seen == fell_back_later
+        # ... while the peak keeps the reign it actually earned.
+        assert by_arrival[peaked_early].crown_first_seen == peaked_early
+
+    async def test_improving_by_one_benchmark_step_keeps_the_anchor(
+        self, session: AsyncSession
+    ) -> None:
+        """Getting better must never cost an owner its seniority.
+
+        The band's floor is held to :data:`MIN_RESOLVABLE_COMPOSITE_STEP` for
+        this case alone. A generation one step back is not distinguishable from
+        the current one by anything the benchmark can measure, so treating it as
+        a different score would charge the owner for the smallest improvement it
+        is possible to make -- and a one-step gain is nowhere near enough to
+        dethrone anyone, so the owner would pay the seniority and get nothing.
+        On 2026-08-14 five of the six rows that stood to lose an inherited
+        anchor were in exactly this position.
+        """
+        improved_from = datetime(2026, 6, 8, 9, 0, tzinfo=UTC)
+        improved_at = datetime(2026, 6, 8, 18, 0, tzinfo=UTC)
+        await _seed_scored(
+            session,
+            miner=_MINER,
+            composite=_ONE_STEP_BACK,
+            created_at=improved_from,
+            n=MIN_ELIGIBLE_CASES,
+        )
+        await _seed_scored(
+            session,
+            miner=_MINER,
+            composite=_WINNER_COMPOSITE,
+            created_at=improved_at,
+            n=MIN_ELIGIBLE_CASES,
+        )
+
+        (row,) = await list_eligible_ledger(session)
+
+        assert row.composite == pytest.approx(_WINNER_COMPOSITE)
+        assert row.crown_first_seen == improved_from
+        assert row.fold_first_seen == improved_from
+
+    async def test_a_plateau_resubmission_keeps_its_anchor(
+        self, session: AsyncSession
+    ) -> None:
+        """The invariant the band exists to protect, in its own test.
+
+        Saturated agents re-measure to the same composite, so a miner iterating
+        at a plateau must not forfeit seniority — that is the entire reason the
+        anchor is a lineage value. Both generations resolve to the first
+        arrival, in either direction of the band.
+        """
+        first = datetime(2026, 6, 8, 9, 0, tzinfo=UTC)
+        resubmitted = datetime(2026, 6, 8, 18, 0, tzinfo=UTC)
+        for name, created_at in (("v1", first), ("v2", resubmitted)):
+            await _seed_scored(
+                session,
+                miner=_MINER,
+                composite=_WINNER_COMPOSITE,
+                created_at=created_at,
+                n=MIN_ELIGIBLE_CASES,
+                name=name,
+            )
+
+        rows = await list_eligible_ledger(session, dedupe_owners=False)
+
+        assert {row.crown_first_seen for row in rows} == {first}
 
     async def test_a_distinctly_worse_ancestor_confers_no_seniority(
         self, session: AsyncSession

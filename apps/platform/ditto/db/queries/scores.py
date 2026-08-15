@@ -95,8 +95,9 @@ def _is_ranked() -> ColumnElement[bool]:
     return and_(Score.n >= MIN_ELIGIBLE_CASES, Score.composite > 0.0)
 
 
-# How far below the winner an ancestor may score and still hand it the
-# lineage's arrival time. Deliberately far tighter than the dethrone band.
+# How far an ancestor's score may sit from the score a generation now defends
+# and still hand it the lineage's arrival time. Deliberately far tighter than
+# the dethrone band, and applied in *both* directions.
 #
 # Seniority and indifference are different questions and used to share one
 # number. The dethrone band asks "is this challenger distinguishable from the
@@ -108,19 +109,46 @@ def _is_ranked() -> ColumnElement[bool]:
 # it conferred its own earlier arrival onto a later generation that had merely
 # *matched* that rival. The owner took the crown without ever leading.
 #
-# The floor cannot be zero: an owner that resubmits at a plateau must keep its
+# The band cannot be zero: an owner that resubmits at a plateau must keep its
 # reign, which is the entire reason the anchor is a lineage value and not the
 # winning tarball's upload time. Saturated agents re-measure to the *same*
 # composite, so only genuine re-measurement jitter needs absorbing, and this is
 # roughly a third of a typical per-row standard error. Widen it only with a
 # concrete case where a legitimate reign was forfeited.
 CROWN_ANCHOR_MARGIN = 0.0005
+# ...but it cannot be narrower than the benchmark's own resolution *below* the
+# defended score, which is why the band is asymmetric.
+#
+# Bench v9 scores 251 memory cases in half-point steps and averages against a
+# tool mean, so the smallest composite change a miner can possibly produce is
+# 0.25/251 = 0.000996. ``CROWN_ANCHOR_MARGIN`` decays to ~0.000226 at the top of
+# a saturated board -- a quarter of one step. A floor beneath one step does not
+# mean "only re-measurement jitter"; it means "improve by the smallest amount
+# the benchmark can express and forfeit your seniority", which is the outcome
+# the lineage anchor exists to prevent. Six live rows on 2026-08-14 sat in that
+# hole, five of them for having got *better*.
+#
+# The ceiling stays tight: an ancestor scoring *above* what an owner now
+# defends is a reign the owner has regressed out of, and no amount of
+# quantization makes that one the same score.
+#
+# Not decayed, unlike the margin. Quantization does not shrink as scores bunch;
+# it is the same 0.000996 at 0.99 as at 0.60. Revisit when a benchmark ships a
+# different case count -- a coarser one needs a larger value here, and this
+# constant is a floor for every version rather than a per-version table only
+# because every scoreable version to date resolves at least this finely.
+MIN_RESOLVABLE_COMPOSITE_STEP = 0.001
 
 
 def _crown_band(
-    top_score: ColumnElement[Any], bench_version: ColumnElement[Any]
+    defended_score: ColumnElement[Any], bench_version: ColumnElement[Any]
 ) -> ColumnElement[Any]:
-    """How close an ancestor must be to count as the same score, in SQL.
+    """How far *above* the defended score an ancestor may sit, in SQL.
+
+    The band's ceiling. :func:`_crown_anchor_floor` is the other side, and it is
+    deliberately looser: an owner that regressed out of a reign should lose it
+    immediately, while an owner that improved past an ancestor should not lose
+    anything at all.
 
     :data:`CROWN_ANCHOR_MARGIN` scaled by the same versioned high-score decay
     the fold uses (:func:`ditto.api_server.koth._dethrone_band_scale`), so a
@@ -129,6 +157,12 @@ def _crown_band(
     dethrone band's flat term, and never the statistical half: standard errors
     move under every retest and would make a lineage's provenance wobble with
     measurement noise rather than with what it actually achieved.
+
+    ``defended_score`` is the score of the generation the anchor is being
+    resolved *for*, not the family's best. Measuring from the family's best
+    makes the best row admit itself unconditionally, so an early high-water
+    generation kept conferring its arrival time to later, worse ones however
+    tight this band became — the defect #748 aimed at and could not reach.
 
     Platform-side and consensus-safe by construction. ``/scoring/scores`` serves
     the resolved anchor as ``LedgerEntry.first_seen``, and the validator folds
@@ -142,7 +176,9 @@ def _crown_band(
         KOTH_BAND_DECAY_START_COMPOSITE,
     )
 
-    bounded = func.least(func.greatest(top_score, KOTH_BAND_DECAY_START_COMPOSITE), 1.0)
+    bounded = func.least(
+        func.greatest(defended_score, KOTH_BAND_DECAY_START_COMPOSITE), 1.0
+    )
     return case(
         (
             bench_version >= KOTH_BAND_DECAY_MIN_BENCH_VERSION,
@@ -152,6 +188,28 @@ def _crown_band(
             ),
         ),
         else_=CROWN_ANCHOR_MARGIN,
+    )
+
+
+def _crown_anchor_floor(
+    defended_score: ColumnElement[Any], bench_version: ColumnElement[Any]
+) -> ColumnElement[Any]:
+    """How far *below* the defended score an ancestor may sit, in SQL.
+
+    The ceiling (:func:`_crown_band`) with
+    :data:`MIN_RESOLVABLE_COMPOSITE_STEP` as a floor beneath it, so the test can
+    never come out narrower than one move of the benchmark it is reading.
+
+    The two directions answer different questions, which is why they are
+    different numbers. Above the defended score: "is this a reign the owner has
+    fallen out of?" — tight, because regressing out of a score should cost the
+    seniority for it at once. Below it: "did the owner already hold this score?"
+    — and a generation one benchmark step back is not distinguishable from the
+    current one by anything the benchmark can measure, so treating it as a
+    different score charges the owner for improving.
+    """
+    return func.greatest(
+        _crown_band(defended_score, bench_version), MIN_RESOLVABLE_COMPOSITE_STEP
     )
 
 
@@ -314,13 +372,20 @@ class LedgerRow:
     still.
 
     So the anchor is the lineage's, not the submission's: the earliest
-    :attr:`first_seen` among this owner's ``scored`` agents that are at the
-    winner's ``bench_version`` and within :func:`_crown_band` of the winner's
+    :attr:`first_seen` among this owner's ``scored`` agents that are at *this
+    row's* ``bench_version`` and within :func:`_crown_band` of *this row's* own
     official score. Only band-equivalent ancestors count, so an early low-scoring
     submission confers nothing; the version match keeps the comparison on one
-    scale; ``scored`` excludes banned and rejected generations. The winner always
-    satisfies its own filter, so this can only ever move the anchor *earlier* —
-    never later than :attr:`first_seen`.
+    scale; ``scored`` excludes banned and rejected generations. This row always
+    satisfies its own filter, so the anchor can only ever move *earlier* — never
+    later than :attr:`first_seen`.
+
+    The comparison is against this row and not the family's best, and that is
+    load-bearing. A family-relative band lets the best row admit itself, so an
+    early high-water generation kept conferring its arrival time to later,
+    *worse* siblings — the owner defended a score its own lineage had already
+    beaten and lost. Tightening the band cannot fix that, because the ancestor
+    doing the damage is the reference the band is measured from.
 
     That band is :data:`CROWN_ANCHOR_MARGIN`, not the dethrone margin. Inheriting
     seniority and surviving a challenge are different questions, and sharing one
@@ -2129,40 +2194,53 @@ async def list_eligible_ledger(
         first_seen=rooted.c.first_seen,
         agent_id=rooted.c.agent_id,
     )
-    # Rank the owner's family once and read the winner's score and benchmark
-    # version back onto every sibling row, so the next level can measure each
-    # generation against the one that actually represents the owner. Windows do
-    # not nest, which is the only reason this is two CTEs instead of one.
+    # Rank the owner's family once so the ledger can serve one row per owner.
     owner_ranked = select(
         rooted,
         func.row_number()
         .over(partition_by=rooted.c.owner_root, order_by=owner_order)
         .label("owner_rank"),
-        func.first_value(rooted.c.official_score)
-        .over(partition_by=rooted.c.owner_root, order_by=owner_order)
-        .label("owner_top_score"),
-        func.first_value(rooted.c.bench_version)
-        .over(partition_by=rooted.c.owner_root, order_by=owner_order)
-        .label("owner_top_bench_version"),
     ).cte("owner_ranked")
-    owner_provenance = select(
-        owner_ranked,
-        func.min(owner_ranked.c.first_seen)
-        .filter(
-            and_(
-                owner_ranked.c.eligible,
-                owner_ranked.c.bench_version == owner_ranked.c.owner_top_bench_version,
-                owner_ranked.c.official_score
-                >= owner_ranked.c.owner_top_score
-                - _crown_band(
-                    owner_ranked.c.owner_top_score,
-                    owner_ranked.c.owner_top_bench_version,
-                ),
-            )
+    # Resolve seniority *per row*, against the score that row defends — not
+    # against the family's best.
+    #
+    # A window partitioned by ``owner_root`` can only measure every generation
+    # against one shared reference, and the only available reference was the
+    # family maximum. That reference always satisfies its own band, so the
+    # earliest high-water generation in a family conferred its arrival time to
+    # every later sibling no matter how far the family had since fallen back:
+    # on 2026-08-14 a 0.995020 submission held the crown on a 0.996348
+    # ancestor's 3.5-hour head start, defending a score its own lineage had
+    # already beaten and lost. Narrowing the band cannot reach that case,
+    # because the offending ancestor *is* the reference the band is measured
+    # from. A correlated minimum can, at the cost of one indexed probe per
+    # candidate row.
+    #
+    # Two-sided, and asymmetric. Above the defended score is a reign the owner
+    # has regressed out of, and it should stop counting at once. Below it is an
+    # ancestor the owner improved past, which must keep counting out to the
+    # benchmark's own resolution -- charging an owner for a one-step improvement
+    # is the failure this anchor exists to prevent.
+    ancestors = rooted.alias("crown_ancestors")
+    crown_first_seen = (
+        select(func.min(ancestors.c.first_seen))
+        .where(
+            ancestors.c.owner_root == owner_ranked.c.owner_root,
+            ancestors.c.eligible,
+            ancestors.c.bench_version == owner_ranked.c.bench_version,
+            ancestors.c.official_score
+            >= owner_ranked.c.official_score
+            - _crown_anchor_floor(
+                owner_ranked.c.official_score, owner_ranked.c.bench_version
+            ),
+            ancestors.c.official_score
+            <= owner_ranked.c.official_score
+            + _crown_band(owner_ranked.c.official_score, owner_ranked.c.bench_version),
         )
-        .over(partition_by=owner_ranked.c.owner_root)
-        .label("crown_first_seen"),
-    ).cte("owner_provenance")
+        .scalar_subquery()
+        .label("crown_first_seen")
+    )
+    owner_provenance = select(owner_ranked, crown_first_seen).cte("owner_provenance")
     winner_select = select(owner_provenance)
     if dedupe_owners:
         winner_select = winner_select.where(owner_provenance.c.owner_rank == 1)
