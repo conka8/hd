@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.68.16 (2026-08-15)
+
+### Bug Fixes
+
+- **platform**: Prevent retry past relay deadline
+  ([#827](https://github.com/ditto-assistant/ditto-subnet/pull/827),
+  [`97cf9f6`](https://github.com/ditto-assistant/ditto-subnet/commit/97cf9f608ea70c07529f6ca71b6db727856e6b1d))
+
+
 ## v0.68.15 (2026-08-15)
 
 ### Bug Fixes
