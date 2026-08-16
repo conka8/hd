@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.77.0 (2026-08-16)
+
+### Features
+
+- **dittobench**: Execute private bench v11 with the v9 evidence stack
+  ([#861](https://github.com/ditto-assistant/ditto-subnet/pull/861),
+  [`aff0474`](https://github.com/ditto-assistant/ditto-subnet/commit/aff04749a7a5a96f485de6b70428d4172cfadbbf))
+
+
 ## v0.76.0 (2026-08-16)
 
 ### Chores
