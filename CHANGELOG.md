@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.78.5 (2026-08-16)
+
+### Bug Fixes
+
+- **scoring**: Narrow LongMem reader rejection attribution
+  ([#875](https://github.com/ditto-assistant/ditto-subnet/pull/875),
+  [`0eb40ad`](https://github.com/ditto-assistant/ditto-subnet/commit/0eb40ad3189c70aeec88973b89d87033fb867f9e))
+
+
 ## v0.78.4 (2026-08-16)
 
 ### Bug Fixes
