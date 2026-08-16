@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.78.7 (2026-08-16)
+
+### Bug Fixes
+
+- **platform**: Project v9 base evidence for every carried-forward bench version
+  ([#877](https://github.com/ditto-assistant/ditto-subnet/pull/877),
+  [`6bd0dea`](https://github.com/ditto-assistant/ditto-subnet/commit/6bd0dea539f331fe8580b53921021b6d5b449f90))
+
+
 ## v0.78.6 (2026-08-16)
 
 ### Bug Fixes
