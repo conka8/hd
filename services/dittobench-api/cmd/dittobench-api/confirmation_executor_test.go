@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -80,6 +81,99 @@ type inertAblationRunner struct{}
 
 func (inertAblationRunner) RunCase(context.Context, ablation.RunRequest) (ablation.CaseRunResult, error) {
 	return ablation.CaseRunResult{}, errors.New("not invoked by orchestrator seam test")
+}
+
+type noReaderLongMemHarness struct{ runs int }
+
+func (noReaderLongMemHarness) Seed(_ context.Context, request protocol.SeedRequest) (protocol.SeedResponse, error) {
+	return protocol.SeedResponse{
+		Pairs: len(request.Pairs), Subjects: len(request.Subjects), Links: len(request.Links),
+	}, nil
+}
+
+func (h *noReaderLongMemHarness) Run(context.Context, protocol.RunRequest) (protocol.RunResponse, error) {
+	h.runs++
+	return protocol.RunResponse{FinalText: "canned-answer"}, nil
+}
+
+type judgeOnlyLongMemMeter struct {
+	rows map[string]longmemeval.ProviderEvidence
+}
+
+func newJudgeOnlyLongMemMeter(profile longmemeval.Profile) *judgeOnlyLongMemMeter {
+	rows := make(map[string]longmemeval.ProviderEvidence, len(profile.Providers))
+	for _, policy := range profile.Providers {
+		rows[policy.Lane] = longmemeval.ProviderEvidence{
+			Lane: policy.Lane, CostSource: longmemeval.AuthoritativeCostV1, Currency: "USD",
+			Provider: policy.Provider, ProfileRevision: policy.ProfileRevision, Model: policy.Model,
+		}
+	}
+	return &judgeOnlyLongMemMeter{rows: rows}
+}
+
+func (m *judgeOnlyLongMemMeter) Snapshot(context.Context) ([]longmemeval.ProviderEvidence, error) {
+	rows := make([]longmemeval.ProviderEvidence, 0, len(m.rows))
+	for _, row := range m.rows {
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func (m *judgeOnlyLongMemMeter) addJudge() {
+	row := m.rows[longmemeval.JudgeLane]
+	row.Requests++
+	row.Successes++
+	row.ReceiptedRequests++
+	row.PromptTokens++
+	row.CompletionTokens++
+	row.TotalTokens += 2
+	row.CostUSDmicros++
+	row.ReceiptSetSHA256 = digestBytes([]byte(fmt.Sprintf("judge-receipts-%d", row.Requests)))
+	m.rows[longmemeval.JudgeLane] = row
+}
+
+type alwaysCorrectLongMemJudge struct{ meter *judgeOnlyLongMemMeter }
+
+func (j alwaysCorrectLongMemJudge) Judge(context.Context, longmemeval.JudgeInput) (bool, error) {
+	j.meter.addJudge()
+	return true, nil
+}
+
+type successfulAblationRunner struct{ calls int }
+
+func (r *successfulAblationRunner) RunCase(_ context.Context, request ablation.RunRequest) (ablation.CaseRunResult, error) {
+	r.calls++
+	switch request.Lane {
+	case ablation.LaneOrdinary:
+		if request.Responder != nil {
+			return ablation.CaseRunResult{}, errors.New("ordinary lane received a responder")
+		}
+		return ablation.CaseRunResult{Score: 0.9}, nil
+	case ablation.LaneInference:
+		if request.Responder == nil {
+			return ablation.CaseRunResult{}, errors.New("inference lane lacks responder")
+		}
+		if _, err := request.Responder.Chat("locked-model", 1); err != nil {
+			return ablation.CaseRunResult{}, err
+		}
+		if _, err := request.Responder.Chat("locked-model", 1); err != nil {
+			return ablation.CaseRunResult{}, err
+		}
+		return ablation.CaseRunResult{Score: 0.1}, nil
+	case ablation.LaneEmbedding:
+		if request.Responder == nil {
+			return ablation.CaseRunResult{}, errors.New("embedding lane lacks responder")
+		}
+		if _, err := request.Responder.Embeddings([]string{"first"}); err != nil {
+			return ablation.CaseRunResult{}, err
+		}
+		if _, err := request.Responder.Embeddings([]string{"second"}); err != nil {
+			return ablation.CaseRunResult{}, err
+		}
+		return ablation.CaseRunResult{Score: 0.1}, nil
+	default:
+		return ablation.CaseRunResult{}, errors.New("unexpected ablation lane")
+	}
 }
 
 func validInstalledConfirmationProfile(t *testing.T) (confirmationExecutionProfileWire, json.RawMessage) {
@@ -538,6 +632,106 @@ func TestTrustedConfirmationDimensionDeadlineReservesCoordinatorBudget(t *testin
 	_, err := executeTrustedConfirmationDimensions(ctx, request, profile, validConfirmationRuntime())
 	if err == nil || !strings.Contains(err.Error(), "cannot fund both frozen dimensions") {
 		t.Fatalf("deadline reservation error = %v", err)
+	}
+}
+
+func TestTrustedConfirmationUnusedReaderZeroContinuesThroughAblationsAndRetainsJudgeSpend(t *testing.T) {
+	profile, _ := validInstalledConfirmationProfile(t)
+	capabilities := []struct {
+		prefix       string
+		questionType string
+		abstention   bool
+	}{
+		{"extract", "single-session-user", false},
+		{"multi", "multi-session", false},
+		{"temporal", "temporal-reasoning", false},
+		{"update", "knowledge-update", false},
+		{"preference", "single-session-preference", false},
+		{"abstain", "multi-session", true},
+	}
+	cases := make([]longmemeval.DatasetCase, 0, 12)
+	for typeIndex, capability := range capabilities {
+		for index := 0; index < 2; index++ {
+			questionID := fmt.Sprintf("private-%s-%02d", capability.prefix, index)
+			if capability.abstention {
+				questionID += "_abs"
+			}
+			cases = append(cases, longmemeval.DatasetCase{
+				QuestionID: questionID, QuestionType: capability.questionType,
+				Question: "What passphrase did I ask you to remember?", Answer: fmt.Sprintf("answer-%d-%d", typeIndex, index),
+				QuestionDate:       "2026/01/02 (Fri) 12:00",
+				HaystackSessionIDs: []string{fmt.Sprintf("session-%d-%d", typeIndex, index)},
+				HaystackDates:      []string{"2025/01/01 (Wed) 10:00"},
+				HaystackSessions: [][]longmemeval.DatasetTurn{{
+					{Role: "user", Content: "Remember the passphrase.", HasAnswer: true},
+					{Role: "assistant", Content: "Stored.", HasAnswer: true},
+				}},
+				AnswerSessionIDs: []string{fmt.Sprintf("answer-%d-%d", typeIndex, index)},
+			})
+		}
+	}
+	longMemRaw, err := json.Marshal(cases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile.LongMemDatasetRevision = "unused-reader-integration-v1"
+	profile.LongMemDatasetSHA256 = digestBytes(longMemRaw)
+	for index := range profile.ProviderLanes {
+		if profile.ProviderLanes[index].Lane == longmemeval.JudgeLane {
+			profile.ProviderLanes[index].MaxRequests = 12
+		}
+	}
+	refreshConfirmationProfileChecksums(t, &profile)
+
+	meter := newJudgeOnlyLongMemMeter(profile.longMemProfile())
+	harness := &noReaderLongMemHarness{}
+	runner := &successfulAblationRunner{}
+	runtime := validConfirmationRuntime()
+	runtime.LongMemSource = readSeekCloser{bytes.NewReader(longMemRaw)}
+	runtime.LongMemHarness = harness
+	runtime.LongMemJudge = alwaysCorrectLongMemJudge{meter: meter}
+	runtime.LongMemMeter = meter
+	runtime.AblationCaseRunner = runner
+	request := validConfirmationRequest()
+	request.Mode = "shadow"
+	request.ArtifactSHA256 = strings.Repeat("c", 64)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	result, err := executeTrustedConfirmationDimensions(ctx, request, profile, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if harness.runs != 12 || runner.calls != 6 {
+		t.Fatalf("longmem runs=%d ablation calls=%d", harness.runs, runner.calls)
+	}
+	if len(result.InferenceAblation) == 0 || len(result.EmbeddingAblation) == 0 ||
+		!canonicalConfirmationSHA256(result.EvidenceSHA256) {
+		t.Fatalf("confirmation did not reach both ablations/report digest: %#v", result)
+	}
+	var wrapper confirmationDimensionWire
+	if err := decodeStrictConfirmationJSON(result.LongMemEval, &wrapper); err != nil {
+		t.Fatal(err)
+	}
+	var evidence longmemeval.Evidence
+	if err := decodeStrictConfirmationJSON(wrapper.Evidence, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence.Score.LongMemMean != 0 || evidence.Score.LongMemStdErr != 0 {
+		t.Fatalf("unused reader retained score: %#v", evidence.Score)
+	}
+	for _, row := range evidence.ProviderEvidence {
+		switch row.Lane {
+		case longmemeval.ReaderLane:
+			if row.Requests != 0 || row.CostUSDmicros != 0 || row.ReceiptSetSHA256 != "" {
+				t.Fatalf("reader row=%#v", row)
+			}
+		case longmemeval.JudgeLane:
+			if row.Requests != 12 || row.Successes != 12 || row.ReceiptedRequests != 12 || row.CostUSDmicros != 12 {
+				t.Fatalf("judge spend was not retained: %#v", row)
+			}
+		default:
+			t.Fatalf("unexpected provider lane %q", row.Lane)
+		}
 	}
 }
 

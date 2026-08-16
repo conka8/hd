@@ -239,6 +239,125 @@ func TestOfficialZeroEvidenceRequiresDedicatedAllReceivedFailureAuthorization(t 
 	}
 }
 
+func TestUnusedReaderOfficialZeroRequiresDedicatedFullyJudgedAuthorization(t *testing.T) {
+	profile, selection := selectFixture(t)
+	score, err := Aggregate(selection, balancedOutcomes(selection, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	meter := newRecordingMeter(profile)
+	for range selection.Cases {
+		meter.add(JudgeLane, 3, 2, 7, true)
+	}
+	providers, err := meter.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewEvidence(profile, selection, artifactDigestA, fixtureLatencyMS, score, providers); err == nil {
+		t.Fatal("ordinary constructor minted unused-reader official zero")
+	}
+	if _, err := newUnusedReaderJudgedZeroEvidence(
+		profile, selection, artifactDigestA, fixtureLatencyMS, score, providers, 1,
+	); err == nil {
+		t.Fatal("received-failure shortcut mixed with fully judged authorization")
+	}
+	evidence, err := newUnusedReaderJudgedZeroEvidence(
+		profile, selection, artifactDigestA, fixtureLatencyMS, score, providers, 0,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := evidence.Validate(profile, selection); err != nil {
+		t.Fatalf("unused-reader zero failed verifier replay: %v", err)
+	}
+	if _, err := evidence.Digest(profile, selection); err != nil {
+		t.Fatalf("unused-reader zero failed canonical digest: %v", err)
+	}
+
+	positiveScore, err := Aggregate(selection, balancedOutcomes(selection, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newUnusedReaderJudgedZeroEvidence(
+		profile, selection, artifactDigestA, fixtureLatencyMS, positiveScore, providers, 0,
+	); err == nil {
+		t.Fatal("positive score accepted without reader use")
+	}
+
+	tests := map[string]func([]ProviderEvidence){
+		"missing receipt": func(rows []ProviderEvidence) {
+			for index := range rows {
+				if rows[index].Lane == JudgeLane {
+					rows[index].ReceiptedRequests--
+				}
+			}
+		},
+		"fallback": func(rows []ProviderEvidence) {
+			for index := range rows {
+				if rows[index].Lane == JudgeLane {
+					rows[index].FallbackUsed = true
+				}
+			}
+		},
+		"identity drift": func(rows []ProviderEvidence) {
+			for index := range rows {
+				if rows[index].Lane == JudgeLane {
+					rows[index].Provider += "-drift"
+				}
+			}
+		},
+		"extra judge request": func(rows []ProviderEvidence) {
+			for index := range rows {
+				if rows[index].Lane == JudgeLane {
+					rows[index].Requests++
+					rows[index].Successes++
+					rows[index].ReceiptedRequests++
+				}
+			}
+		},
+		"token over cap": func(rows []ProviderEvidence) {
+			for index := range rows {
+				if rows[index].Lane == JudgeLane {
+					rows[index].PromptTokens = providerPolicy(&profile, JudgeLane).MaxPromptTokens + 1
+					rows[index].TotalTokens = rows[index].PromptTokens + rows[index].CompletionTokens
+				}
+			}
+		},
+		"cost over cap": func(rows []ProviderEvidence) {
+			for index := range rows {
+				if rows[index].Lane == JudgeLane {
+					rows[index].CostUSDmicros = providerPolicy(&profile, JudgeLane).MaxCostUSDmicros + 1
+				}
+			}
+		},
+		"judge zero reader positive": func(rows []ProviderEvidence) {
+			positive := providerEvidenceFor(profile)
+			for index := range rows {
+				if rows[index].Lane == ReaderLane {
+					for _, row := range positive {
+						if row.Lane == ReaderLane {
+							rows[index] = row
+						}
+					}
+				} else if rows[index].Lane == JudgeLane {
+					rows[index] = newRecordingMeter(profile).values[JudgeLane]
+				}
+			}
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			changed := append([]ProviderEvidence(nil), providers...)
+			mutate(changed)
+			if _, err := newUnusedReaderJudgedZeroEvidence(
+				profile, selection, artifactDigestA, fixtureLatencyMS, score, changed, 0,
+			); err == nil {
+				t.Fatal("invalid unused-reader form accepted")
+			}
+		})
+	}
+}
+
 func TestNewEvidenceRejectsIdentityAndScoreTamper(t *testing.T) {
 	profile, selection := selectFixture(t)
 	score, err := Aggregate(selection, balancedOutcomes(selection, profile.CasesPerCapability/2))
@@ -288,6 +407,10 @@ func TestEvidenceDigestIsCanonicalAcrossProviderInputOrder(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("provider input order moved digest: got %s want %s", got, want)
+	}
+	const positiveEvidenceDigest = "7194baa74fcd68d6ea3466b95ba2b9f5e995e0138151b57697382f009b4b6197"
+	if want != positiveEvidenceDigest {
+		t.Fatalf("positive reader/judge evidence bytes drifted: got %s want %s", want, positiveEvidenceDigest)
 	}
 }
 

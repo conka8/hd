@@ -141,20 +141,37 @@ class LongMemEvidence(BaseModel):
     def _validate_zero_provider_form(self) -> LongMemEvidence:
         zero_rows = [row.requests == 0 for row in self.provider_evidence]
         if any(zero_rows):
-            if not all(zero_rows):
-                raise ValueError(
-                    "LongMem provider lanes cannot mix zero and positive evidence"
-                )
-            if (
-                self.score.longmem_mean_micros != 0
-                or self.score.longmem_stderr_micros != 0
-                or any(
-                    row.correct != 0 or row.mean_micros != 0
+            exact_zero_score = (
+                self.score.longmem_mean_micros == 0
+                and self.score.longmem_stderr_micros == 0
+                and all(
+                    row.correct == 0 and row.mean_micros == 0
                     for row in self.score.per_capability
                 )
+            )
+            if all(zero_rows):
+                if not exact_zero_score:
+                    raise ValueError(
+                        "zero-provider LongMem evidence requires an exact zero score"
+                    )
+                return self
+            lanes = {row.lane: row for row in self.provider_evidence}
+            reader = lanes.get("reader")
+            judge = lanes.get("judge")
+            if (
+                len(self.provider_evidence) != 2
+                or len(lanes) != 2
+                or reader is None
+                or judge is None
+                or reader.requests != 0
+                or judge.requests != self.score.case_count
+                or judge.successes != self.score.case_count
+                or judge.receipted_requests != self.score.case_count
+                or not exact_zero_score
             ):
                 raise ValueError(
-                    "zero-provider LongMem evidence requires an exact zero score"
+                    "mixed LongMem provider evidence requires an unused reader, "
+                    "one receipted judge request per case, and an exact zero score"
                 )
         return self
 

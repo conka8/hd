@@ -211,7 +211,8 @@ func (e Executor) Execute(
 			return ExecutionResult{}, fmt.Errorf("LongMemEval final provider evidence: %w", err)
 		}
 	}
-	if zeroProviderCount != 0 && zeroProviderCount != len(profile.Providers) {
+	unusedReader := zeroProviderCount == 1 && zeroProviderLane == ReaderLane
+	if zeroProviderCount != 0 && zeroProviderCount != len(profile.Providers) && !unusedReader {
 		return ExecutionResult{}, fmt.Errorf(
 			"LongMemEval final provider evidence: lane %q is zero while another frozen lane is positive",
 			zeroProviderLane,
@@ -227,6 +228,19 @@ func (e Executor) Execute(
 		evidence, err = newAllReceivedFailuresEvidence(
 			profile, dataset.Selection, artifactSHA256, uint64(elapsedMS), score, final, receivedFailures,
 		)
+	} else if unusedReader {
+		if receivedFailures != 0 {
+			return ExecutionResult{}, errors.New("LongMemEval unused-reader evidence cannot include received harness failures")
+		}
+		for index := range outcomes {
+			outcomes[index].Correct = false
+		}
+		score, err = Aggregate(dataset.Selection, outcomes)
+		if err == nil {
+			evidence, err = newUnusedReaderJudgedZeroEvidence(
+				profile, dataset.Selection, artifactSHA256, uint64(elapsedMS), score, final, receivedFailures,
+			)
+		}
 	} else {
 		evidence, err = NewEvidence(profile, dataset.Selection, artifactSHA256, uint64(elapsedMS), score, final)
 	}
