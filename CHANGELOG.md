@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.75.4 (2026-08-16)
+
+### Bug Fixes
+
+- **scoring**: Carry the v9 evidence, gate, and curve-v3 stack forward to bench v10
+  ([#859](https://github.com/ditto-assistant/ditto-subnet/pull/859),
+  [`f44a3c9`](https://github.com/ditto-assistant/ditto-subnet/commit/f44a3c942d902ebde7b302974e062a78fa39c82f))
+
+
 ## v0.75.3 (2026-08-16)
 
 ### Bug Fixes
