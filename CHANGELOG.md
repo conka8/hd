@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.80.1 (2026-08-16)
+
+### Bug Fixes
+
+- **platform**: Unpin curve-v3 efficiency schema from bench 9
+  ([#885](https://github.com/ditto-assistant/ditto-subnet/pull/885),
+  [`f04ecc9`](https://github.com/ditto-assistant/ditto-subnet/commit/f04ecc9dfe991621bb09f950382b5b4ded9e0ea4))
+
+- **screener**: Stop the fleet bootstrap leaking a root-only ssh command
+  ([#886](https://github.com/ditto-assistant/ditto-subnet/pull/886),
+  [`672cea2`](https://github.com/ditto-assistant/ditto-subnet/commit/672cea283a40643e71796d950d1de20bedf4f463))
+
+
 ## v0.80.0 (2026-08-16)
 
 ### Features
