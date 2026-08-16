@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.80.0 (2026-08-16)
+
+### Features
+
+- **screener**: Control Targon provider routing
+  ([#704](https://github.com/ditto-assistant/ditto-subnet/pull/704),
+  [`480353f`](https://github.com/ditto-assistant/ditto-subnet/commit/480353f74e4e21e5a5822e2cda6a2fd4ead676b2))
+
+
 ## v0.79.2 (2026-08-16)
 
 ### Bug Fixes
