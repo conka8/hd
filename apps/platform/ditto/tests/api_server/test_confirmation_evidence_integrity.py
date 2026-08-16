@@ -283,6 +283,132 @@ class TestLongMemReplay:
             row.receipt_set_sha256 == "" for row in verified.evidence.provider_evidence
         )
 
+    def test_platform_accepts_exact_unused_reader_judged_official_zero(
+        self,
+    ) -> None:
+        base = longmem_envelope()
+        score = base.evidence.score.model_copy(
+            update={
+                "longmem_mean_micros": 0,
+                "longmem_stderr_micros": 0,
+                "per_capability": [
+                    row.model_copy(update={"correct": 0, "mean_micros": 0})
+                    for row in base.evidence.score.per_capability
+                ],
+            }
+        )
+        lanes = []
+        for row in base.evidence.provider_evidence:
+            if row.lane == "reader":
+                lanes.append(
+                    row.model_copy(
+                        update={
+                            "requests": 0,
+                            "successes": 0,
+                            "receipted_requests": 0,
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                            "total_tokens": 0,
+                            "cost_usd_micros": 0,
+                            "receipt_set_sha256": "",
+                        }
+                    )
+                )
+            else:
+                lanes.append(
+                    row.model_copy(
+                        update={
+                            "requests": 12,
+                            "successes": 12,
+                            "receipted_requests": 12,
+                        }
+                    )
+                )
+        evidence = base.evidence.model_copy(
+            update={"score": score, "provider_evidence": lanes}
+        )
+        envelope = base.model_copy(
+            update={
+                "evidence": evidence,
+                "evidence_sha256": evidence_digest(evidence),
+                "request_count": 12,
+                "input_tokens": 50,
+                "output_tokens": 10,
+                "provider_cost_microusd": 5_000,
+            }
+        )
+        profile = verification_profile()
+        profile = replace(
+            profile,
+            provider_lanes=tuple(
+                replace(row, max_requests=12) if row.lane == "judge" else row
+                for row in profile.provider_lanes
+            ),
+        )
+        profile = replace(
+            profile,
+            longmem_profile_checksum=profile.longmem_checksum(),
+        )
+        evidence = evidence.model_copy(
+            update={"profile_checksum": profile.longmem_profile_checksum}
+        )
+        envelope = envelope.model_copy(
+            update={
+                "evidence": evidence,
+                "evidence_sha256": evidence_digest(evidence),
+            }
+        )
+        verified = _validate_longmem(
+            envelope,
+            artifact_sha256=envelope.evidence.artifact_sha256,
+            profile=profile,
+        )
+        assert verified.evidence.score.longmem_mean_micros == 0
+        assert [row.requests for row in verified.evidence.provider_evidence] == [
+            12,
+            0,
+        ]
+        rebuilt = rebuild(
+            unsigned_report().model_copy(update={"longmemeval": envelope}),
+            profile=profile,
+        )
+        assert rebuilt.root.longmemeval.evidence.score.longmem_mean_micros == 0
+        assert rebuilt.root.totals.request_count == 12
+        assert rebuilt.root.totals.input_tokens == 50
+        assert rebuilt.root.totals.output_tokens == 10
+        assert rebuilt.root.totals.provider_cost_microusd == 5_000
+
+        for changed in {
+            "positive score": evidence.model_copy(
+                update={"score": score.model_copy(update={"longmem_mean_micros": 1})}
+            ),
+            "judge count drift": evidence.model_copy(
+                update={
+                    "provider_evidence": [
+                        row.model_copy(update={"requests": 11})
+                        if row.lane == "judge"
+                        else row
+                        for row in lanes
+                    ]
+                }
+            ),
+        }.values():
+            changed_envelope = envelope.model_copy(
+                update={
+                    "evidence": changed,
+                    "evidence_sha256": evidence_digest(changed),
+                }
+            )
+            with pytest.raises(
+                (ConfirmationEvidenceError, ValueError),
+                match="LongMem (macro mean|mixed provider form)",
+            ):
+                _validate_longmem(
+                    changed_envelope,
+                    artifact_sha256=changed.artifact_sha256,
+                    profile=profile,
+                )
+
     def test_preserves_distinct_provider_lanes_and_derived_totals(self) -> None:
         verified = rebuild()
         evidence = verified.root.longmemeval.evidence

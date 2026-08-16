@@ -701,10 +701,29 @@ def _validate_longmem(
                 for row in evidence.score.per_capability
             )
         )
-        if not all(zero_lanes) or not exact_zero_rows or not exact_zero_score:
-            raise ConfirmationEvidenceError(
-                "LongMem zero-provider form is not an exact official zero"
-            )
+        if all(zero_lanes):
+            if not exact_zero_rows or not exact_zero_score:
+                raise ConfirmationEvidenceError(
+                    "LongMem zero-provider form is not an exact official zero"
+                )
+        else:
+            rows_by_lane = {row.lane: row for row in lanes}
+            reader = rows_by_lane.get("reader")
+            judge = rows_by_lane.get("judge")
+            if (
+                len(rows_by_lane) != 2
+                or reader is None
+                or judge is None
+                or reader.requests != 0
+                or judge.requests != evidence.score.case_count
+                or judge.successes != evidence.score.case_count
+                or judge.receipted_requests != evidence.score.case_count
+                or not exact_zero_score
+            ):
+                raise ConfirmationEvidenceError(
+                    "LongMem mixed provider form is not an exact unused-reader "
+                    "official zero"
+                )
     elif any(
         row.successes == 0
         or row.receipted_requests != row.requests

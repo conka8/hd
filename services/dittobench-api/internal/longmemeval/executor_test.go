@@ -592,14 +592,40 @@ func TestExecutorStopsBeforeCallingLaneWithExhaustedRequestBudget(t *testing.T) 
 	}
 }
 
-func TestExecutorRejectsUnusedProviderLaneAtFinalization(t *testing.T) {
+func TestExecutorScoresUnusedReaderAsOfficialZeroAfterEveryCaseIsJudged(t *testing.T) {
 	profile, raw, _ := runtimeFixture(t)
 	meter := newRecordingMeter(profile)
 	harness := newStarterHarness(nil)
 	judge := &exactJudge{meter: meter}
 	executor := Executor{Harness: harness, Judge: judge, Meter: meter, Limits: ExecutionLimits{MaxElapsed: time.Second, SeedBatchPairs: 64}}
-	_, err := executor.Execute(context.Background(), bytes.NewReader(raw), profile, artifactDigestA, fixtureProjectionKey)
-	requireErrorContains(t, err, "final provider evidence")
+	result, err := executor.Execute(context.Background(), bytes.NewReader(raw), profile, artifactDigestA, fixtureProjectionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if harness.runs != len(result.selection.Cases) || len(judge.inputs) != len(result.selection.Cases) {
+		t.Fatalf("runs=%d judges=%d cases=%d", harness.runs, len(judge.inputs), len(result.selection.Cases))
+	}
+	if !zeroScore(result.Evidence.Score) {
+		t.Fatalf("unused reader retained judged correctness: %#v", result.Evidence.Score)
+	}
+	for _, row := range result.Evidence.ProviderEvidence {
+		switch row.Lane {
+		case ReaderLane:
+			if !zeroProviderCounters(row) || row.ReceiptSetSHA256 != "" {
+				t.Fatalf("reader row is not canonical zero: %#v", row)
+			}
+		case JudgeLane:
+			want := uint64(len(result.selection.Cases))
+			if row.Requests != want || row.Successes != want || row.ReceiptedRequests != want {
+				t.Fatalf("judge row=%#v want %d complete receipts", row, want)
+			}
+		default:
+			t.Fatalf("unexpected provider lane %q", row.Lane)
+		}
+	}
+	if err := result.Validate(profile); err != nil {
+		t.Fatalf("unused-reader official zero failed replay: %v", err)
+	}
 }
 
 func TestExecutorIgnoresHarnessSelfReportedUsage(t *testing.T) {

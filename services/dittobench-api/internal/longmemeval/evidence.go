@@ -100,8 +100,16 @@ func NewEvidence(
 	score Score,
 	providerEvidence []ProviderEvidence,
 ) (Evidence, error) {
-	return newEvidence(profile, selection, artifactSHA256, latencyMS, score, providerEvidence, false)
+	return newEvidence(profile, selection, artifactSHA256, latencyMS, score, providerEvidence, zeroProviderUnauthorized)
 }
+
+type zeroProviderAuthorization uint8
+
+const (
+	zeroProviderUnauthorized zeroProviderAuthorization = iota
+	zeroProviderAllReceivedFailures
+	zeroProviderUnusedReaderJudgedZero
+)
 
 // newAllReceivedFailuresEvidence is the only producer authorization for the
 // canonical zero-provider form. Verifiers can replay that signed form, but an
@@ -120,7 +128,36 @@ func newAllReceivedFailuresEvidence(
 	if receivedFailures != len(selection.Cases) || !zeroScore(score) {
 		return Evidence{}, errors.New("zero-provider evidence requires every selected case to be a received harness failure")
 	}
-	return newEvidence(profile, selection, artifactSHA256, latencyMS, score, providerEvidence, true)
+	return newEvidence(
+		profile, selection, artifactSHA256, latencyMS, score, providerEvidence, zeroProviderAllReceivedFailures,
+	)
+}
+
+// newUnusedReaderJudgedZeroEvidence is the only producer authorization for a
+// judge-backed official zero whose submitted harness never invoked the frozen
+// reader lane. Every selected case must have reached the trusted judge exactly
+// once, with complete receipts, and no received-failure shortcut may have been
+// used. The executor forces every outcome incorrect before calling this
+// constructor, so a deterministic or canned response cannot earn LongMem
+// credit without model use.
+func newUnusedReaderJudgedZeroEvidence(
+	profile Profile,
+	selection Selection,
+	artifactSHA256 string,
+	latencyMS uint64,
+	score Score,
+	providerEvidence []ProviderEvidence,
+	receivedFailures int,
+) (Evidence, error) {
+	if receivedFailures != 0 || !zeroScore(score) {
+		return Evidence{}, errors.New("unused-reader evidence requires judged cases and an exact zero score")
+	}
+	if err := validateUnusedReaderJudgedZero(profile, selection, providerEvidence); err != nil {
+		return Evidence{}, err
+	}
+	return newEvidence(
+		profile, selection, artifactSHA256, latencyMS, score, providerEvidence, zeroProviderUnusedReaderJudgedZero,
+	)
 }
 
 func newEvidence(
@@ -130,7 +167,7 @@ func newEvidence(
 	latencyMS uint64,
 	score Score,
 	providerEvidence []ProviderEvidence,
-	allowZeroProviders bool,
+	zeroAuthorization zeroProviderAuthorization,
 ) (Evidence, error) {
 	profileChecksum, err := profile.Checksum()
 	if err != nil {
@@ -182,8 +219,17 @@ func newEvidence(
 		return Evidence{}, errors.New("provider evidence does not cover every frozen lane")
 	}
 	if zeroProviders != 0 {
-		if !allowZeroProviders || zeroProviders != len(normalizedProviders) || !zeroScore(score) {
-			return Evidence{}, errors.New("zero-provider evidence is allowed only for an attributed all-failure zero score")
+		switch zeroAuthorization {
+		case zeroProviderAllReceivedFailures:
+			if zeroProviders != len(normalizedProviders) || !zeroScore(score) {
+				return Evidence{}, errors.New("zero-provider evidence is allowed only for an attributed all-failure zero score")
+			}
+		case zeroProviderUnusedReaderJudgedZero:
+			if err := validateUnusedReaderJudgedZero(profile, selection, normalizedProviders); err != nil {
+				return Evidence{}, err
+			}
+		default:
+			return Evidence{}, errors.New("zero-provider evidence requires explicit producer authorization")
 		}
 	}
 
@@ -199,6 +245,48 @@ func newEvidence(
 		Score:            score,
 		ProviderEvidence: normalizedProviders,
 	}, nil
+}
+
+func validateUnusedReaderJudgedZero(
+	profile Profile,
+	selection Selection,
+	providerEvidence []ProviderEvidence,
+) error {
+	if len(selection.Cases) == 0 || len(providerEvidence) != 2 {
+		return errors.New("unused-reader evidence requires the frozen reader and judge lanes")
+	}
+	policies := make(map[string]ProviderPolicy, len(profile.Providers))
+	for _, policy := range profile.Providers {
+		policies[policy.Lane] = policy
+	}
+	readerPolicy, hasReaderPolicy := policies[ReaderLane]
+	judgePolicy, hasJudgePolicy := policies[JudgeLane]
+	if !hasReaderPolicy || !hasJudgePolicy || len(policies) != 2 {
+		return errors.New("unused-reader evidence requires the frozen reader and judge policies")
+	}
+	observed := make(map[string]ProviderEvidence, len(providerEvidence))
+	for _, row := range providerEvidence {
+		if _, duplicate := observed[row.Lane]; duplicate {
+			return fmt.Errorf("duplicate provider lane %q", row.Lane)
+		}
+		observed[row.Lane] = row
+	}
+	reader, hasReader := observed[ReaderLane]
+	judge, hasJudge := observed[JudgeLane]
+	if !hasReader || !hasJudge || len(observed) != 2 {
+		return errors.New("unused-reader evidence must cover reader and judge exactly once")
+	}
+	if err := validateZeroProviderEvidence(readerPolicy, reader); err != nil {
+		return err
+	}
+	if err := ValidateProviderEvidence(judgePolicy, judge); err != nil {
+		return err
+	}
+	want := uint64(len(selection.Cases))
+	if judge.Requests != want || judge.Successes != want || judge.ReceiptedRequests != want {
+		return errors.New("unused-reader evidence requires one successful receipted judge request per selected case")
+	}
+	return nil
 }
 
 func validateZeroProviderEvidence(policy ProviderPolicy, evidence ProviderEvidence) error {
@@ -279,12 +367,22 @@ func (e Evidence) normalized(profile Profile, selection Selection) (Evidence, er
 		math.IsNaN(e.Score.LongMemStdErr) || math.IsInf(e.Score.LongMemStdErr, 0) {
 		return Evidence{}, errors.New("evidence score contains a non-finite value")
 	}
-	allowZeroProviders := len(e.ProviderEvidence) > 0
+	zeroAuthorization := zeroProviderUnauthorized
+	allZeroProviders := len(e.ProviderEvidence) > 0
 	for _, row := range e.ProviderEvidence {
-		allowZeroProviders = allowZeroProviders && zeroProviderCounters(row) && row.ReceiptSetSHA256 == ""
+		allZeroProviders = allZeroProviders && zeroProviderCounters(row) && row.ReceiptSetSHA256 == ""
+	}
+	if allZeroProviders {
+		zeroAuthorization = zeroProviderAllReceivedFailures
+	} else if zeroScore(e.Score) {
+		for _, row := range e.ProviderEvidence {
+			if row.Lane == ReaderLane && zeroProviderCounters(row) && row.ReceiptSetSHA256 == "" {
+				zeroAuthorization = zeroProviderUnusedReaderJudgedZero
+			}
+		}
 	}
 	validated, err := newEvidence(
-		profile, selection, e.ArtifactSHA256, e.LatencyMS, e.Score, e.ProviderEvidence, allowZeroProviders,
+		profile, selection, e.ArtifactSHA256, e.LatencyMS, e.Score, e.ProviderEvidence, zeroAuthorization,
 	)
 	if err != nil {
 		return Evidence{}, err
