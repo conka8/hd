@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.78.2 (2026-08-16)
+
+### Bug Fixes
+
+- **tests**: Stop contract generators emitting from a stale protocol install
+  ([#870](https://github.com/ditto-assistant/ditto-subnet/pull/870),
+  [`c9ef64d`](https://github.com/ditto-assistant/ditto-subnet/commit/c9ef64d3d59f2aa33021d4952096b493b8fb6d2d))
+
+
 ## v0.78.1 (2026-08-16)
 
 ### Bug Fixes
