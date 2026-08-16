@@ -9,6 +9,9 @@ from screener_capacity.builder import (
     _delete_rental,
     _docker_config,
     _kaniko_script,
+    run_one,
+    run_one_runtime_smoke,
+    run_one_source_review,
     run_one_submission,
 )
 from screener_capacity.controller import ControllerError
@@ -89,6 +92,8 @@ class _Targon:
         self.deployed: list[str] = []
         self.suspended: list[str] = []
         self.deleted: list[str] = []
+        self.updated: list[tuple[str, dict[str, Any]]] = []
+        self.log_text = "DITTO_BUILD_DIGEST=sha256:" + "b" * 64
 
     def inventory(self) -> list[dict[str, Any]]:
         return [{"name": "cpu-small", "available": self.available}]
@@ -103,11 +108,19 @@ class _Targon:
             raise self.deploy_error
         return {}
 
+    def update(self, uid: str, **values: Any) -> dict[str, Any]:
+        self.updated.append((uid, values))
+        return {}
+
     def state(self, _uid: str) -> dict[str, Any]:
         status = self.state_status
         if self.deleted and self.delete_fails and self.state_after_delete_failure:
             status = self.state_after_delete_failure
-        return {"status": status, "message": self.state_message}
+        return {
+            "status": status,
+            "message": self.state_message,
+            "urls": [{"port": 8080, "url": "https://runtime.example"}],
+        }
 
     def suspend(self, uid: str) -> dict[str, Any]:
         self.suspended.append(uid)
@@ -117,6 +130,10 @@ class _Targon:
         self.deleted.append(uid)
         if self.delete_fails:
             raise TargonAPIError(operation="DELETE", status=500, reason="HTTP error")
+
+    def logs(self, _uid: str, tail: int = 160) -> str:
+        del tail
+        return self.log_text
 
 
 def _settings() -> Settings:
@@ -131,6 +148,13 @@ def _settings() -> Settings:
         interval_seconds=1,
         lock_file=Path("/tmp/test-builder.lock"),
         submission_builder_image="public.example/submission-builder@sha256:" + "a" * 64,
+        gcp_bootstrap_service_account="bootstrap@example.test",
+        gcp_bootstrap_delegate_service_account=None,
+        source_review_secret_resource="projects/test/secrets/reviewer",
+        source_review_timeout_seconds=1,
+        candidate_registry_service_account="candidate-pull@example.test",
+        candidate_registry_writer_service_account="candidate-push@example.test",
+        runtime_timeout_seconds=1,
     )
 
 
@@ -139,6 +163,187 @@ def _submission() -> dict[str, Any]:
         "build_id": "550e8400-e29b-41d4-a716-446655440000",
         "job_token": "job-capability-" + "x" * 48,
     }
+
+
+class _SourceControl(_SubmissionControl):
+    def status(self, _review_id: str) -> str:
+        return self.build_status
+
+
+def _source_review() -> dict[str, Any]:
+    return {
+        "review_id": "550e8400-e29b-41d4-a716-446655440000",
+        "attempt_id": "650e8400-e29b-41d4-a716-446655440000",
+        "artifact_sha256": "b" * 64,
+        "image_reference": "public.example/screener@sha256:" + "a" * 64,
+        "job_token": "job-capability-" + "x" * 48,
+    }
+
+
+def test_source_review_runs_as_one_shot_pinned_rental(monkeypatch) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        "screener_capacity.builder.GCPBootstrapTokenMinter.mint",
+        lambda _self: "bootstrap-" + "x" * 120,
+    )
+    monkeypatch.setattr("screener_capacity.builder.time.sleep", sleeps.append)
+    control = _SourceControl(_source_review())
+    targon = _Targon()
+
+    assert run_one_source_review(_settings(), targon, control)
+
+    assert targon.created is not None
+    assert targon.created["name"] == "ditto-source-550e8400e29b41d4"
+    assert targon.created["image"] == _source_review()["image_reference"]
+    assert targon.created["resource_name"] == "cpu-small"
+    assert targon.created["commands"] == [
+        "/app/workers/screener/.venv/bin/python",
+        "-m",
+    ]
+    assert targon.created["args"] == ["ditto_screener.source_review_job"]
+    envs = targon.created["envs"]
+    assert {row["name"] for row in envs} >= {
+        "DITTO_SOURCE_REVIEW_JOB",
+        "DITTO_SOURCE_REVIEW_JOB_TOKEN",
+        "SCREENER_GCP_BOOTSTRAP_ACCESS_TOKEN",
+        "SCREENER_SOURCE_REVIEW_SECRET_RESOURCE",
+    }
+    assert targon.deployed == ["wrk-build-1"]
+    assert targon.deleted == ["wrk-build-1"]
+    assert targon.updated == []
+    assert sleeps == [5]
+
+
+def test_source_review_capacity_miss_falls_back_without_rental() -> None:
+    control = _SourceControl(_source_review())
+    targon = _Targon(available=0)
+
+    assert run_one_source_review(_settings(), targon, control)
+
+    assert targon.created is None
+    assert control.updates[-1][1]["error_code"] == (
+        "TARGON_SOURCE_REVIEW_CAPACITY_UNAVAILABLE"
+    )
+
+
+def test_runtime_smoke_launches_promoted_image_directly(monkeypatch) -> None:
+    build_id = "550e8400-e29b-41d4-a716-446655440000"
+    artifact = {
+        "build_id": build_id,
+        "archive_url_b64": base64.b64encode(
+            b"https://storage.example/image.tar"
+        ).decode(),
+        "output_sha256": "c" * 64,
+        "output_size_bytes": 123,
+        "destination": "registry.example/candidates/miner:build-test",
+    }
+    control = _SubmissionControl(artifact)
+    targon = _Targon()
+    monkeypatch.setattr(
+        "screener_capacity.builder._download_runtime_archive",
+        lambda _artifact, destination: destination.write_bytes(b"image"),
+    )
+    minted_accounts: list[str] = []
+
+    def _mint_access_token(service_account: str) -> str:
+        minted_accounts.append(service_account)
+        return "registry-" + service_account + "-" + "x" * 120
+
+    monkeypatch.setattr(
+        "screener_capacity.builder._mint_access_token", _mint_access_token
+    )
+    image = "registry.example/candidates/miner@sha256:" + "d" * 64
+    promotion: dict[str, object] = {}
+
+    def _promote_runtime_archive(**values: object) -> str:
+        promotion.update(values)
+        return image
+
+    monkeypatch.setattr(
+        "screener_capacity.builder._promote_runtime_archive",
+        _promote_runtime_archive,
+    )
+
+    class _Health:
+        status = 200
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *_args):  # type: ignore[no-untyped-def]
+            return False
+
+    monkeypatch.setattr(
+        "screener_capacity.builder.urllib.request.urlopen",
+        lambda *_args, **_kwargs: _Health(),
+    )
+
+    assert run_one_runtime_smoke(_settings(), targon, control)
+
+    assert targon.created is not None
+    assert targon.created["image"] == image
+    assert targon.created["ports"] == [
+        {"port": 8080, "protocol": "TCP", "routing": "PROXIED"}
+    ]
+    assert minted_accounts == [
+        "candidate-push@example.test",
+        "candidate-pull@example.test",
+    ]
+    assert promotion["access_token"] == (
+        "registry-candidate-push@example.test-" + "x" * 120
+    )
+    assert targon.created["registry_auth"]["password"] == (
+        "registry-candidate-pull@example.test-" + "x" * 120
+    )
+    assert control.updates[-1][1]["status"] == "succeeded"
+    assert control.updates[-1][1]["image_reference"] == image
+
+
+def test_runtime_smoke_delete_failure_is_suspended_and_audited(monkeypatch) -> None:
+    build_id = "550e8400-e29b-41d4-a716-446655440000"
+    artifact = {
+        "build_id": build_id,
+        "archive_url_b64": base64.b64encode(
+            b"https://storage.example/image.tar"
+        ).decode(),
+        "output_sha256": "c" * 64,
+        "output_size_bytes": 123,
+        "destination": "registry.example/candidates/miner:build-test",
+    }
+    control = _SubmissionControl(artifact)
+    targon = _Targon(delete_fails=True)
+    monkeypatch.setattr(
+        "screener_capacity.builder._download_runtime_archive",
+        lambda _artifact, destination: destination.write_bytes(b"image"),
+    )
+    monkeypatch.setattr(
+        "screener_capacity.builder._mint_access_token",
+        lambda _service_account: "registry-" + "x" * 120,
+    )
+    monkeypatch.setattr(
+        "screener_capacity.builder._promote_runtime_archive",
+        lambda **_values: "registry.example/candidates/miner@sha256:" + "d" * 64,
+    )
+
+    class _Health:
+        status = 200
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *_args):  # type: ignore[no-untyped-def]
+            return False
+
+    monkeypatch.setattr(
+        "screener_capacity.builder.urllib.request.urlopen",
+        lambda *_args, **_kwargs: _Health(),
+    )
+
+    assert run_one_runtime_smoke(_settings(), targon, control)
+
+    assert targon.deleted == ["wrk-build-1"]
+    assert targon.suspended == ["wrk-build-1"]
+    assert control.cleanup == [(build_id, "wrk-build-1")]
 
 
 def test_submission_rental_receives_only_attempt_capability_and_pinned_image() -> None:
@@ -281,3 +486,58 @@ def test_submission_update_reconciles_a_lost_platform_response(monkeypatch) -> N
     )
 
     assert requests == ["PUT", "GET"]
+
+
+def _trusted_build() -> dict[str, Any]:
+    return {
+        "build_id": "550e8400-e29b-41d4-a716-446655440000",
+        "source_repository": "https://github.com/ditto-assistant/ditto-subnet.git",
+        "source_sha": "a" * 40,
+        "dockerfile_path": "workers/screener/Dockerfile",
+        "destination": "us-central1-docker.pkg.dev/p/r/screener:sha-a",
+    }
+
+
+def test_trusted_kaniko_rental_uses_public_runtime_writer_only(monkeypatch) -> None:
+    minted_accounts: list[str] = []
+    monkeypatch.setattr(
+        "screener_capacity.builder._mint_access_token",
+        lambda service_account: (
+            minted_accounts.append(service_account) or ("registry-" + service_account)
+        ),
+    )
+    control = _SubmissionControl(_trusted_build())
+    targon = _Targon()
+
+    assert run_one(_settings(), targon, control)
+
+    assert minted_accounts == ["builder@example.test"]
+    assert targon.created is not None
+    encoded = next(
+        row["value"]
+        for row in targon.created["envs"]
+        if row["name"] == "DITTO_DOCKER_CONFIG_B64"
+    )
+    config = json.loads(base64.b64decode(encoded))
+    assert config["auths"]["us-central1-docker.pkg.dev"]["password"] == (
+        "registry-builder@example.test"
+    )
+    assert control.updates[-1][1]["status"] == "succeeded"
+    assert control.cleanup == []
+
+
+def test_trusted_kaniko_delete_failure_is_suspended_and_audited(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "screener_capacity.builder._mint_access_token",
+        lambda _service_account: "registry-builder@example.test",
+    )
+    control = _SubmissionControl(_trusted_build())
+    targon = _Targon(delete_fails=True)
+
+    assert run_one(_settings(), targon, control)
+
+    assert targon.deleted == ["wrk-build-1"]
+    assert targon.suspended == ["wrk-build-1"]
+    assert control.cleanup == [(_trusted_build()["build_id"], "wrk-build-1")]
