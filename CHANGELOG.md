@@ -2,6 +2,29 @@
 
 <!-- version list -->
 
+## v0.77.1 (2026-08-16)
+
+### Bug Fixes
+
+- **scoring**: Attribute rejected LongMem reader requests
+  ([#867](https://github.com/ditto-assistant/ditto-subnet/pull/867),
+  [`2398b09`](https://github.com/ditto-assistant/ditto-subnet/commit/2398b09176ab73b7ea41dc93829ddb6f020941a8))
+
+- **scoring**: Cap the KOTH dethrone band at the score left to win
+  ([#868](https://github.com/ditto-assistant/ditto-subnet/pull/868),
+  [`47dbbac`](https://github.com/ditto-assistant/ditto-subnet/commit/47dbbac1255e06a409a002a8e5a355db9db46ad5))
+
+### Chores
+
+- **agents**: Add local ditto-subnet github skill
+  ([#866](https://github.com/ditto-assistant/ditto-subnet/pull/866),
+  [`4ed8b59`](https://github.com/ditto-assistant/ditto-subnet/commit/4ed8b59e40b245ce40426c37aaa7df221ceb5c22))
+
+- **tests**: Stop screener heartbeat tampering test racing the clock
+  ([#864](https://github.com/ditto-assistant/ditto-subnet/pull/864),
+  [`6448d16`](https://github.com/ditto-assistant/ditto-subnet/commit/6448d162914fdcc5a055f93b71471db1db5e7126))
+
+
 ## v0.77.0 (2026-08-16)
 
 ### Features
