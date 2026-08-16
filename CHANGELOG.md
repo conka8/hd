@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.78.0 (2026-08-16)
+
+### Features
+
+- **platform**: Ship the bench v11 contract as an operator rollout target
+  ([#869](https://github.com/ditto-assistant/ditto-subnet/pull/869),
+  [`b22b22f`](https://github.com/ditto-assistant/ditto-subnet/commit/b22b22f3d76ff7a34fa0915ce70a3c15cd9a7ad2))
+
+
 ## v0.77.1 (2026-08-16)
 
 ### Bug Fixes
