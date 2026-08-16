@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.78.6 (2026-08-16)
+
+### Bug Fixes
+
+- **validator**: Advertise bench v11 scorer capability
+  ([#876](https://github.com/ditto-assistant/ditto-subnet/pull/876),
+  [`0fc88cb`](https://github.com/ditto-assistant/ditto-subnet/commit/0fc88cbf82974ac4d4254801ae1f8e7451dedb4a))
+
+
 ## v0.78.5 (2026-08-16)
 
 ### Bug Fixes
