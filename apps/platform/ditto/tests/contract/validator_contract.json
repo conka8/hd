@@ -1234,7 +1234,10 @@
             "type": "string"
           },
           "bench_version": {
-            "const": 9,
+            "enum": [
+              9,
+              10
+            ],
             "type": "integer"
           },
           "dataset_sha256": {
@@ -1706,7 +1709,10 @@
             "$ref": "#/$defs/V9AuthoritativeToolGate"
           },
           "bench_version": {
-            "const": 9,
+            "enum": [
+              9,
+              10
+            ],
             "type": "integer"
           },
           "model_use": {
@@ -3129,7 +3135,10 @@
             "type": "string"
           },
           "bench_version": {
-            "const": 9,
+            "enum": [
+              9,
+              10
+            ],
             "type": "integer"
           },
           "dataset_sha256": {
@@ -3601,7 +3610,10 @@
             "$ref": "#/$defs/V9AuthoritativeToolGate"
           },
           "bench_version": {
-            "const": 9,
+            "enum": [
+              9,
+              10
+            ],
             "type": "integer"
           },
           "model_use": {
