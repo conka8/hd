@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.78.1 (2026-08-16)
+
+### Bug Fixes
+
+- **dittobench**: Stop enforcing v9 case attribution on bench v10
+  ([#872](https://github.com/ditto-assistant/ditto-subnet/pull/872),
+  [`836dcc6`](https://github.com/ditto-assistant/ditto-subnet/commit/836dcc67e5ed1067a7bc259a3e4105b762f2a348))
+
+
 ## v0.78.0 (2026-08-16)
 
 ### Features
