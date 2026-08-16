@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.79.0 (2026-08-16)
+
+### Features
+
+- **platform-dashboard**: Distill the validator fleet table to three columns
+  ([#878](https://github.com/ditto-assistant/ditto-subnet/pull/878),
+  [`7138fc3`](https://github.com/ditto-assistant/ditto-subnet/commit/7138fc3491d0ca81a1bc0c48d89b17863685f28c))
+
+
 ## v0.78.7 (2026-08-16)
 
 ### Bug Fixes
