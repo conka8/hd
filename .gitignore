@@ -41,3 +41,7 @@ validator.env
 
 # Weights & Biases local run artifacts
 wandb/
+
+# Local agent worktrees and night-shift scratch
+worktrees/
+.claude/night-shift/
