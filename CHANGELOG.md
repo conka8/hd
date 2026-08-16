@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.79.1 (2026-08-16)
+
+### Bug Fixes
+
+- **dashboard**: Quiet the fleet header to exceptions only
+  ([#879](https://github.com/ditto-assistant/ditto-subnet/pull/879),
+  [`3e0e170`](https://github.com/ditto-assistant/ditto-subnet/commit/3e0e170b2c06185b85996369abb57d47fb54456a))
+
+- **platform**: Publish the score floor on the ranking scale it comes from
+  ([#882](https://github.com/ditto-assistant/ditto-subnet/pull/882),
+  [`bc8dd46`](https://github.com/ditto-assistant/ditto-subnet/commit/bc8dd46f678366f3d681f42c91c89f05b9821470))
+
+
 ## v0.79.0 (2026-08-16)
 
 ### Features
