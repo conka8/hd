@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.75.3 (2026-08-16)
+
+### Bug Fixes
+
+- **scoring**: Settle unused LongMem reader as zero
+  ([`8b29417`](https://github.com/ditto-assistant/ditto-subnet/commit/8b2941751651a675d1a6e9b70631c88c3ca5e26b))
+
+
 ## v0.75.2 (2026-08-15)
 
 ### Bug Fixes
