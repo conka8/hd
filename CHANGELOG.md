@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.78.3 (2026-08-16)
+
+### Bug Fixes
+
+- **dittobench**: Settle v10/v11 case attribution so base evidence assembles
+  ([#873](https://github.com/ditto-assistant/ditto-subnet/pull/873),
+  [`f68d1fe`](https://github.com/ditto-assistant/ditto-subnet/commit/f68d1fe7e681e7d1490bc1e7af2a89fce47bca81))
+
+
 ## v0.78.2 (2026-08-16)
 
 ### Bug Fixes
