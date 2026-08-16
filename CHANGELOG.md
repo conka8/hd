@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.79.2 (2026-08-16)
+
+### Bug Fixes
+
+- **dittobench**: Score a proven zero-inference v10/v11 run as 0.00
+  ([#883](https://github.com/ditto-assistant/ditto-subnet/pull/883),
+  [`0249b03`](https://github.com/ditto-assistant/ditto-subnet/commit/0249b0370866763d4be4e7f965ed21d03738eeb8))
+
+
 ## v0.79.1 (2026-08-16)
 
 ### Bug Fixes
