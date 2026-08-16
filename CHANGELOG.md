@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v0.76.0 (2026-08-16)
+
+### Chores
+
+- **agent**: Add LongMem confirmation rollout skill
+  ([#863](https://github.com/ditto-assistant/ditto-subnet/pull/863),
+  [`4b6769b`](https://github.com/ditto-assistant/ditto-subnet/commit/4b6769bb44c6940cc994553c39edfafc6de937c5))
+
+### Features
+
+- **datagen**: Define private bench v11 anti-template-fitting contract
+  ([#860](https://github.com/ditto-assistant/ditto-subnet/pull/860),
+  [`e95904f`](https://github.com/ditto-assistant/ditto-subnet/commit/e95904f97ec469953116067b0331a7b2a66cec45))
+
+
 ## v0.75.4 (2026-08-16)
 
 ### Bug Fixes
