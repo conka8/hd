@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.78.4 (2026-08-16)
+
+### Bug Fixes
+
+- **release**: Expect bench v11 in the dittobench deploy identity gate
+  ([#874](https://github.com/ditto-assistant/ditto-subnet/pull/874),
+  [`8143634`](https://github.com/ditto-assistant/ditto-subnet/commit/8143634ffc0c341546db8177028d4774a0158735))
+
+
 ## v0.78.3 (2026-08-16)
 
 ### Bug Fixes
