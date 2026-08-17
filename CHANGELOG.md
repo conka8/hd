@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.82.0 (2026-08-17)
+
+### Features
+
+- **platform**: Hold resubmissions of rejected artifacts
+  ([#891](https://github.com/ditto-assistant/ditto-subnet/pull/891),
+  [`32a1f14`](https://github.com/ditto-assistant/ditto-subnet/commit/32a1f14423d1ef89e49b1c660e3f27197cb80ced))
+
+
 ## v0.81.0 (2026-08-17)
 
 ### Bug Fixes
