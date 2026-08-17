@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.83.5 (2026-08-17)
+
+### Bug Fixes
+
+- **platform**: Keep desired bench live after frozen-member bans
+  ([#905](https://github.com/ditto-assistant/ditto-subnet/pull/905),
+  [`15fc5b9`](https://github.com/ditto-assistant/ditto-subnet/commit/15fc5b998b0a52d1b50cc9e4da21cd2a2a7eacdb))
+
+
 ## v0.83.4 (2026-08-17)
 
 ### Bug Fixes
