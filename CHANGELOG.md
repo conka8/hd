@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.83.2 (2026-08-17)
+
+### Bug Fixes
+
+- **screener**: Sweep leftover targon one-shot rentals
+  ([#892](https://github.com/ditto-assistant/ditto-subnet/pull/892),
+  [`0fdc872`](https://github.com/ditto-assistant/ditto-subnet/commit/0fdc8720de320983efc5b297eabc8bf97bc0afef))
+
+
 ## v0.83.1 (2026-08-17)
 
 ### Bug Fixes
