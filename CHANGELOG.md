@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.83.4 (2026-08-17)
+
+### Bug Fixes
+
+- **screener**: Hold targon one-shots until delete
+  ([#901](https://github.com/ditto-assistant/ditto-subnet/pull/901),
+  [`6f1bed4`](https://github.com/ditto-assistant/ditto-subnet/commit/6f1bed455ee6edf9e96095c02d8d26830d637aff))
+
+
 ## v0.83.3 (2026-08-17)
 
 ### Bug Fixes
