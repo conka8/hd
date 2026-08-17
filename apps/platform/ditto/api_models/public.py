@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ditto.api_models.benchmark_capacity import BenchmarkAdmission
 from ditto.api_models.benchmark_progress import BenchmarkProgressStage
 from ditto.api_models.confirmation_progress import ConfirmationProgressStage
+from ditto.api_models.name_claim import PublicNameHandle
 from ditto.api_models.retry_state import RetryState
 from ditto.api_models.screener import ScreenerProgressStage, ScreenerRuntimeState
 from ditto.api_models.stack_health import ValidatorStackHealth
@@ -660,6 +661,15 @@ class PublicLeaderboardEntry(BaseModel):
         str,
         Field(description="Human-friendly name of the miner's winning agent."),
     ]
+    name_handle: PublicNameHandle | None = Field(
+        default=None,
+        description=(
+            "Signed handle reservation touching this name, when one exists. "
+            "``reserved`` means this owner family holds the stem; ``disputed`` "
+            "means an upheld reservation belongs to someone else; ``pending`` "
+            "means a claim is awaiting entrenched-miner endorsements."
+        ),
+    )
     agent_version: Annotated[
         int | None,
         Field(
@@ -2251,6 +2261,13 @@ class PublicActivityEntry(BaseModel):
         str, Field(pattern=_SS58_PATTERN, description="Submitting miner's SS58 hotkey.")
     ]
     name: Annotated[str, Field(description="Miner-provided agent display name.")]
+    name_handle: PublicNameHandle | None = Field(
+        default=None,
+        description=(
+            "Signed handle reservation touching this name, when one exists. "
+            "Same semantics as the public leaderboard annotation."
+        ),
+    )
     version: Annotated[
         int | None,
         Field(
@@ -2863,6 +2880,13 @@ class PublicAgentSummary(BaseModel):
         str, Field(pattern=_SS58_PATTERN, description="Submitting miner's SS58 hotkey.")
     ]
     name: Annotated[str, Field(description="Miner-provided agent display name.")]
+    name_handle: PublicNameHandle | None = Field(
+        default=None,
+        description=(
+            "Signed handle reservation touching this name, when one exists. "
+            "Same semantics as the public leaderboard annotation."
+        ),
+    )
     version: Annotated[int | None, Field(default=None, ge=1)] = None
     status: Annotated[str, Field(description="Current public lifecycle stage.")]
     submitted_at: datetime

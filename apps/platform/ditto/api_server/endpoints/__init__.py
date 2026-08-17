@@ -35,6 +35,9 @@ from ditto.api_server.endpoints.admin_inference_observability import (
 from ditto.api_server.endpoints.admin_inference_routes import (
     router as admin_inference_routes_router,
 )
+from ditto.api_server.endpoints.admin_leaderboard import (
+    router as admin_leaderboard_router,
+)
 from ditto.api_server.endpoints.admin_lease_revocations import (
     router as admin_lease_revocations_router,
 )
@@ -78,6 +81,7 @@ from ditto.api_server.endpoints.attestation import router as attestation_router
 from ditto.api_server.endpoints.health import router as health_router
 from ditto.api_server.endpoints.inference import router as inference_router
 from ditto.api_server.endpoints.metrics import router as metrics_router
+from ditto.api_server.endpoints.name_claims import router as name_claims_router
 from ditto.api_server.endpoints.public import router as public_router
 from ditto.api_server.endpoints.retrieval import router as retrieval_router
 from ditto.api_server.endpoints.scoring import router as scoring_router
@@ -100,6 +104,7 @@ __all__ = [
     "admin_queue_policy_settings_router",
     "admin_efficiency_bonus_settings_router",
     "admin_inference_routes_router",
+    "admin_leaderboard_router",
     "admin_lease_revocations_router",
     "admin_copy_review_router",
     "admin_confirmation_bundles_router",
@@ -121,6 +126,7 @@ __all__ = [
     "scoring_router",
     "screener_router",
     "attestation_router",
+    "name_claims_router",
     "upload_router",
     "validator_router",
     "validator_confirmation_router",

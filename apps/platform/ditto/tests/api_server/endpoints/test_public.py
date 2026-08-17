@@ -5329,6 +5329,7 @@ class TestPublicActivity:
             "agent_id": agent_id,
             "miner_hotkey": _MINER_A,
             "name": "hot-path-agent",
+            "name_handle": None,
             "version": None,
             "status": "waiting_screening",
             "submitted_at": body["submitted_at"],
@@ -5457,8 +5458,10 @@ class TestPublicActivity:
         # Budget the complete handler, not just its five-query page helper.
         # This fixture exercises an open rollout, validator assignments, retry
         # classification, fleet/orphan snapshots, and build telemetry.
-        # Includes one bounded query for the independent live LongMem lane.
-        assert len(statements) <= 34
+        # Includes one bounded query for the independent live LongMem lane
+        # and one for live handle-claim reservations plus attested owner roots
+        # so operations badges classify family children correctly.
+        assert len(statements) <= 36
         body = response.json()
         assert body["active_bench_version"] == _ERA
         assert body["desired_bench_version"] == _NEXT_ERA
@@ -5670,6 +5673,7 @@ class TestPublicActivity:
             "agent_id",
             "miner_hotkey",
             "name",
+            "name_handle",
             "version",
             "status",
             "artifact_release",
@@ -8098,8 +8102,10 @@ class TestPublicActivity:
         # Includes authority, assignments, queue floors, release state, queue
         # preview, retry state and ATH metadata around the page query itself.
         # Includes one bounded heartbeat query so retry labels only count work
-        # that a currently available validator can actually consume.
-        assert len(statements) <= 18
+        # that a currently available validator can actually consume, plus
+        # one live handle-claim reservation read and one attested-owner fold
+        # so family children keep a reserved handle.
+        assert len(statements) <= 20
         assert body["count"] == 1
         assert body["total"] == 2
         assert body["total_pages"] == 2

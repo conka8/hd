@@ -11,6 +11,7 @@ import type { JSX } from "solid-js";
 import {
   agentLabel,
   agentName,
+  publicDisplayName,
   agentVersionLabel,
   fmtMs,
   fx,
@@ -66,6 +67,7 @@ import {
 } from "./chips";
 import type { BoardEntry, LeaderboardStore } from "./leaderboard-data";
 import type { ChainWeightInfo } from "../../types/leaderboard";
+import { HandleBadge } from "../ui/HandleBadge";
 import { ChainWeightsPanel } from "./ChainWeightsPanel";
 
 // Matching agent name, UID, and hotkey covers how people actually look a
@@ -75,6 +77,7 @@ import { ChainWeightsPanel } from "./ChainWeightsPanel";
 export function boardMatches(entry: BoardEntry, needle: string): boolean {
   if (!needle) return true;
   const fields: unknown[] = [
+    publicDisplayName(entry.agent_name, entry.name_handle),
     entry.agent_name,
     entry.miner_hotkey,
     entry.miner_uid == null ? "" : "uid " + entry.miner_uid,
@@ -418,7 +421,7 @@ function BoardRow(props: {
       ? " r" + e().rank
       : "";
   const kind = (): "zero" | "provisional" | null => unrankedKind(e());
-  const displayName = (): string => agentName(e().agent_name);
+  const displayName = (): string => publicDisplayName(e().agent_name, e().name_handle);
   const rowLabel = (): string =>
     (elig()
       ? (finalizedEntry() ? "Rank " : "Provisional rank ") + e().rank
@@ -522,6 +525,7 @@ function BoardRow(props: {
             <span class="winner-identity">
               <span class="winner-name">
                 <EntityButton kind="agent" id={e().agent_id} label={displayName()} />
+                <HandleBadge handle={e().name_handle} />
                 <Show when={kind() === "zero"}>
                   <ChipTip
                     class="prov tip-chip"

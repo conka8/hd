@@ -57,6 +57,7 @@ from ditto.api_models import (
     BenchHarnessConfig,
     CreateScreeningDisputeRequest,
     CreateScreeningDisputeResponse,
+    NameClaimListResponse,
     PublicActivityEntry,
     PublicActivityResponse,
     PublicAgentSummary,
@@ -100,6 +101,7 @@ from ditto.api_models import (
     PublicLeaderboardResponse,
     PublicMetricDoc,
     PublicModelUse,
+    PublicNameHandle,
     PublicOperationsResponse,
     PublicOrphanedSlot,
     PublicProvisionalScore,
@@ -228,6 +230,7 @@ from ditto.db.models import (
     BenchmarkDataset,
     BenchmarkRollout,
     ConfirmationScore,
+    EvaluationPayment,
     InferenceGrant,
     Score,
     ScreenerCapacitySnapshot,
@@ -994,16 +997,28 @@ def _benchmark_stalled(
 
 
 def _public_benchmark_progress(
-    work: ActiveValidatorWork, now: datetime
+    work: ActiveValidatorWork,
+    now: datetime,
+    *,
+    owner_root: str | None = None,
+    handle_claims: dict[str, Any] | None = None,
+    strike: bool = True,
 ) -> PublicBenchmarkProgress:
     """Project private signed counts onto the fixed public allowlist."""
     progress = work.progress
     started_at = cast(datetime, _aware(work.ticket.issued_at))
+    agent_name = (
+        _public_named(work.agent.name, owner_root, handle_claims or {}, strike=strike)[
+            0
+        ]
+        if handle_claims is not None
+        else work.agent.name
+    )
     if progress is None:
         return PublicBenchmarkProgress(
             agent_id=work.agent.agent_id,
             slot_id=work.ticket.slot_id,
-            agent_name=work.agent.name,
+            agent_name=agent_name,
             bench_version=work.ticket.bench_version,
             started_at=started_at,
         )
@@ -1039,7 +1054,7 @@ def _public_benchmark_progress(
     return PublicBenchmarkProgress(
         agent_id=work.agent.agent_id,
         slot_id=work.ticket.slot_id,
-        agent_name=work.agent.name,
+        agent_name=agent_name,
         bench_version=work.ticket.bench_version,
         started_at=started_at,
         stage=progress.stage,
@@ -1820,6 +1835,91 @@ def _composite_breakdown(
         return None
 
 
+def _public_name_handle(
+    agent_name: str,
+    owner_root: str | None,
+    claims: dict[str, Any],
+) -> PublicNameHandle | None:
+    """Project a live name claim onto one leaderboard row."""
+    if not claims:
+        return None
+    from ditto.api_server.name_claim import handle_status_for, normalize_name_stem
+
+    stem = normalize_name_stem(agent_name)
+    claim = claims.get(stem)
+    if claim is None:
+        return None
+    status = handle_status_for(
+        agent_name=agent_name,
+        owner_root=owner_root,
+        claims={stem: (claim.status, claim.claimant_owner_root)},
+    )
+    if status is None:
+        return None
+    return PublicNameHandle(stem=stem, status=status, claim_id=claim.claim_id)
+
+
+def _public_named(
+    stored_name: str,
+    owner_root: str | None,
+    claims: dict[str, Any],
+    *,
+    strike: bool = True,
+) -> tuple[str, PublicNameHandle | None]:
+    """Public display name plus handle annotation for one stored agent name.
+
+    Public identity surfaces (leaderboard, activity, summary) pass
+    ``strike=True``. Operator-adjacent fleet/operations/heartbeat documents
+    keep ``agents.name`` and do not call this helper.
+    """
+    from ditto.api_server.name_claim import public_display_name
+
+    handle = _public_name_handle(stored_name, owner_root, claims)
+    display = (
+        public_display_name(
+            stored_name=stored_name,
+            status=None if handle is None else handle.status,
+        )
+        if strike
+        else stored_name
+    )
+    return display, handle
+
+
+def _public_duplicate_name(
+    metadata: tuple[str | None, int | None, str | None] | None,
+    claims: dict[str, Any],
+    *,
+    strike: bool,
+) -> str | None:
+    """Strike a copy-review target the same way as the row's own name."""
+    if metadata is None or metadata[0] is None:
+        return None
+    stored_name, _version, owner_root = metadata
+    return _public_named(str(stored_name), owner_root, claims, strike=strike)[0]
+
+
+async def _attested_owner_roots_for_rows(
+    session: Any,
+    rows: list[Any],
+) -> dict[UUID, str]:
+    """Attested payment-owner root for each activity row, matching the board."""
+    if not rows:
+        return {}
+    identities = [
+        (
+            row.agent.miner_hotkey,
+            emission_owner(
+                miner_hotkey=row.agent.miner_hotkey,
+                miner_coldkey=row.miner_coldkey,
+            ),
+        )
+        for row in rows
+    ]
+    roots = await attested_emission_owner_roots(session, identities)
+    return {row.agent.agent_id: root for row, root in zip(rows, roots, strict=True)}
+
+
 def _public_entry(
     rank: int,
     r: LedgerRow,
@@ -1854,6 +1954,7 @@ def _public_entry(
     average_run_cost_microusd: int | None = None,
     inference_run_count: int = 0,
     v9_confirmation: V9ConfirmationPublicProjection | None = None,
+    name_handle: PublicNameHandle | None = None,
 ) -> PublicLeaderboardEntry:
     """Map a ledger row to the public entry, exposing only the safe subset of
     ``details`` (never ``per_case``, which carries the answer key)."""
@@ -1939,6 +2040,7 @@ def _public_entry(
         score_quorum=SCORING_QUORUM,
         agent_id=r.agent_id,
         agent_name=agent_name,
+        name_handle=name_handle,
         agent_version=agent_version,
         artifact_release=artifact_release,
         submission_family=submission_family,
@@ -2055,17 +2157,25 @@ def _public_submission_family(
         "best_official_score_per_payment_owner",
         "best_canonical_score_per_payment_owner",
     ] = "best_official_score_per_payment_owner",
+    handle_claims: dict[str, Any] | None = None,
+    strike: bool = True,
 ) -> PublicSubmissionFamily | None:
     """Project a payment-owner family without exposing its coldkey."""
     if not members:
         return None
+    claims = handle_claims or {}
     return PublicSubmissionFamily(
         member_count=len(members),
         selection_rule=selection_rule,
         members=[
             PublicSubmissionFamilyMember(
                 agent_id=member.agent_id,
-                agent_name=member.agent_name,
+                agent_name=_public_named(
+                    member.agent_name,
+                    getattr(member, "owner", None),
+                    claims,
+                    strike=strike,
+                )[0],
                 agent_version=member.agent_version,
                 miner_hotkey=member.miner_hotkey,
                 canonical_composite=member.canonical_composite,
@@ -2082,13 +2192,19 @@ def _public_leaderboard_family(
     *,
     representative_agent_id: UUID,
     confirmation_depth: dict[UUID, int] | None = None,
+    owner_root: str | None = None,
+    handle_claims: dict[str, Any] | None = None,
+    strike: bool = True,
 ) -> PublicLeaderboardFamily | None:
     """Project only the grouped children the leaderboard actually renders."""
     depths = confirmation_depth or {}
+    claims = handle_claims or {}
     children = [
         PublicLeaderboardFamilyMember(
             agent_id=member.agent_id,
-            agent_name=member.agent_name,
+            agent_name=_public_named(
+                member.agent_name, owner_root, claims, strike=strike
+            )[0],
             agent_version=member.agent_version,
             canonical_composite=member.canonical_composite,
             submitted_at=member.submitted_at,
@@ -2375,6 +2491,20 @@ async def benchmark_timeline(
         bench_versions=[entry.bench_version for entry in releases],
         not_before_by_version=released_at,
     )
+    from ditto.api_server.name_claim import expected_netuid as _name_claim_netuid
+    from ditto.db.queries.name_claims import active_handle_claims
+
+    handle_claims = await active_handle_claims(session, netuid=_name_claim_netuid())
+    identities = [
+        (
+            point.miner_hotkey,
+            emission_owner(miner_hotkey=point.miner_hotkey, miner_coldkey=None),
+        )
+        for point in points
+    ]
+    timeline_roots = (
+        await attested_emission_owner_roots(session, identities) if points else []
+    )
     return PublicBenchmarkTimelineResponse(
         generated_at=datetime.now(UTC),
         score_quorum=SCORING_QUORUM,
@@ -2384,13 +2514,15 @@ async def benchmark_timeline(
                 recorded_at=point.recorded_at,
                 bench_version=point.bench_version,
                 agent_id=point.agent_id,
-                agent_name=point.agent_name,
+                agent_name=_public_named(
+                    point.agent_name, root, handle_claims, strike=True
+                )[0],
                 miner_hotkey=point.miner_hotkey,
                 memory_mean=point.memory_mean,
                 composite=point.composite,
                 score_count=point.score_count,
             )
-            for point in points
+            for point, root in zip(points, timeline_roots, strict=True)
         ],
     )
 
@@ -2445,21 +2577,20 @@ def _displayed_efficiency_factors(
     }
 
 
-@router.get(
-    "/leaderboard",
-    response_model=PublicLeaderboardResponse,
-    response_model_exclude={"entries": {"__all__": _LEADERBOARD_DETAIL_FIELDS}},
-)
-async def leaderboard(
+async def build_public_leaderboard(
     request: Request,
     response: Response,
     session: SessionDep,
-    bench_version: Annotated[int | None, Query(ge=1)] = None,
+    bench_version: int | None = None,
+    *,
+    strike_colliding_names: bool = True,
 ) -> PublicLeaderboardResponse:
     """Best score per payment-time coldkey, with registration eligibility.
 
     The selected generation's hotkey remains the on-chain weight destination.
     Legacy rows without payment provenance fall back to one position per hotkey.
+    ``strike_colliding_names`` hides reserved-handle collisions on the public
+    board; the admin projection keeps stored ``agents.name``.
     """
     now = datetime.now(UTC)
     from ditto.db.queries.benchmark_rollout import open_rollout
@@ -2940,6 +3071,10 @@ async def leaderboard(
     agent_metadata = {
         agent_id: (name, version) for agent_id, name, version in agent_rows
     }
+    from ditto.api_server.name_claim import expected_netuid as _name_claim_netuid
+    from ditto.db.queries.name_claims import active_handle_claims
+
+    handle_claims = await active_handle_claims(session, netuid=_name_claim_netuid())
     entries = []
     for i, row in enumerate(finalized_rows, start=1):
         settled, rolling, rolling_count = rollout_states.get(
@@ -2964,11 +3099,20 @@ async def leaderboard(
             else None
         )
         adjustment_present = bounded_factor is not None or legacy_bonus is not None
+        stored_name, stored_version = agent_metadata[row.agent_id]
+        display_name, name_handle = _public_named(
+            stored_name,
+            row.emission_owner_root,
+            handle_claims,
+            strike=strike_colliding_names,
+        )
         entries.append(
             _public_entry(
                 i,
                 row,
-                *agent_metadata[row.agent_id],
+                display_name,
+                stored_version,
+                name_handle=name_handle,
                 finalized=True,
                 score_count=score_counts.get(row.agent_id, SCORING_QUORUM),
                 settled_composite=settled,
@@ -3010,6 +3154,9 @@ async def leaderboard(
                     row.family_members,
                     representative_agent_id=row.agent_id,
                     confirmation_depth=confirmation_depth,
+                    owner_root=row.emission_owner_root,
+                    handle_claims=handle_claims,
+                    strike=strike_colliding_names,
                 ),
                 official_composite=board_official_composites.get(
                     row.agent_id, row.composite
@@ -3054,11 +3201,20 @@ async def leaderboard(
         settled, rolling, rolling_count = rollout_states.get(
             row.agent_id, (None, None, None)
         )
+        stored_name, stored_version = agent_metadata[row.agent_id]
+        display_name, name_handle = _public_named(
+            stored_name,
+            row.emission_owner_root,
+            handle_claims,
+            strike=strike_colliding_names,
+        )
         entries.append(
             _public_entry(
                 len(entries) + 1,
                 row,
-                *agent_metadata[row.agent_id],
+                display_name,
+                stored_version,
+                name_handle=name_handle,
                 finalized=False,
                 score_count=count,
                 settled_composite=settled,
@@ -3120,6 +3276,27 @@ async def leaderboard(
             )
         ),
         efficiency=_efficiency_status(efficiency_view),
+    )
+
+
+@router.get(
+    "/leaderboard",
+    response_model=PublicLeaderboardResponse,
+    response_model_exclude={"entries": {"__all__": _LEADERBOARD_DETAIL_FIELDS}},
+)
+async def leaderboard(
+    request: Request,
+    response: Response,
+    session: SessionDep,
+    bench_version: Annotated[int | None, Query(ge=1)] = None,
+) -> PublicLeaderboardResponse:
+    """Best score per payment-time coldkey, with colliding handles stricken."""
+    return await build_public_leaderboard(
+        request,
+        response,
+        session,
+        bench_version,
+        strike_colliding_names=True,
     )
 
 
@@ -3382,6 +3559,7 @@ def _public_orphaned_slot(orphan: OrphanedLease) -> PublicOrphanedSlot:
     return PublicOrphanedSlot(
         slot_id=orphan.slot_id,
         agent_id=orphan.agent_id,
+        # Fleet view: stored name. Public identity surfaces go through _public_named.
         agent_name=orphan.agent_name,
         bench_version=orphan.bench_version,
         # ``released`` is filtered out before this is reached: a released slot is
@@ -3418,6 +3596,7 @@ def _public_confirmation_progress(
         subjects=[
             PublicConfirmationSubject(
                 agent_id=subject.agent_id,
+                # Confirmation fleet view: stored name.
                 agent_name=subject.agent_name,
             )
             for subject in work.subjects
@@ -3629,6 +3808,7 @@ def _validator_heartbeats_response(
                     assignment.agent.agent_id if assignment is not None else None
                 ),
                 assigned_agent_name=(
+                    # Validator fleet heartbeat: stored name.
                     assignment.agent.name if assignment is not None else None
                 ),
                 reported_agent_id=row.active_agent_id,
@@ -3801,6 +3981,18 @@ async def validator_names(
     )
 
 
+@router.get("/name-claims", response_model=NameClaimListResponse)
+async def public_name_claims(
+    response: Response,
+    session: SessionDep,
+) -> NameClaimListResponse:
+    """Live signed handle reservations. Cacheable; signatures stay off this list."""
+    from ditto.api_server.endpoints.name_claims import list_claims
+
+    response.headers["Cache-Control"] = _CACHE_CONTROL
+    return await list_claims(session)
+
+
 @router.get("/screeners", response_model=PublicScreenerHeartbeatsResponse)
 async def screeners(
     response: Response,
@@ -3884,6 +4076,7 @@ async def screeners(
                 state=cast(ScreenerRuntimeState, row.state),
                 active_agent_id=active_agent_id if active_work else None,
                 active_agent_name=(
+                    # Screener fleet heartbeat: stored name.
                     active_agent.name
                     if active_work and active_agent is not None
                     else None
@@ -4288,7 +4481,7 @@ def _public_activity_response(
     active_bench_version: int | None = None,
     benchmark_admitted_agent_ids: set[UUID] | None = None,
     retry_states: dict[UUID, AgentRetryState] | None = None,
-    duplicate_metadata: dict[UUID, tuple[str, int | None]] | None = None,
+    duplicate_metadata: dict[UUID, tuple[str, int | None, str | None]] | None = None,
     ath_reviews: dict[UUID, _PublicAthReviewSnapshot] | None = None,
     ath_review_composite: dict[UUID, float] | None = None,
     retired_agent_ids: set[UUID] | None = None,
@@ -4300,12 +4493,23 @@ def _public_activity_response(
     precomputed_total: int | None = None,
     already_paginated: bool = False,
     precomputed_page_size: int | None = None,
+    handle_claims: dict[str, Any] | None = None,
+    owner_roots: dict[UUID, str] | None = None,
+    strike_colliding_names: bool = True,
 ) -> PublicActivityResponse:
     """Project activity from the same validated work set used by fleet health."""
+    claims = handle_claims or {}
+    roots = owner_roots or {}
     active_by_agent: dict[UUID, list[PublicBenchmarkProgress]] = {}
     for work in active_work:
         active_by_agent.setdefault(work.agent.agent_id, []).append(
-            _public_benchmark_progress(work, now)
+            _public_benchmark_progress(
+                work,
+                now,
+                owner_root=roots.get(work.agent.agent_id),
+                handle_claims=claims if strike_colliding_names else None,
+                strike=strike_colliding_names,
+            )
         )
     board_active_agent_ids = {
         agent_id
@@ -4344,7 +4548,16 @@ def _public_activity_response(
             if normalized_query
             in " ".join(
                 (
-                    row.agent.name,
+                    (
+                        _public_named(
+                            row.agent.name,
+                            roots.get(row.agent.agent_id),
+                            claims,
+                            strike=strike_colliding_names,
+                        )[0]
+                        if strike_colliding_names
+                        else row.agent.name
+                    ),
                     str(row.agent.agent_id),
                     row.agent.miner_hotkey,
                     row_status,
@@ -4405,6 +4618,21 @@ def _public_activity_response(
             terminal_history_limit=terminal_history_limit,
         )
         page_size = max(1, len(page_rows))
+    displayed = {
+        row.agent.agent_id: _public_named(
+            row.agent.name,
+            roots.get(
+                row.agent.agent_id,
+                emission_owner(
+                    miner_hotkey=row.agent.miner_hotkey,
+                    miner_coldkey=row.miner_coldkey,
+                ),
+            ),
+            claims,
+            strike=strike_colliding_names,
+        )
+        for row, _row_status in page_rows
+    }
     return PublicActivityResponse(
         generated_at=now,
         count=len(page_rows),
@@ -4418,7 +4646,8 @@ def _public_activity_response(
             PublicActivityEntry(
                 agent_id=row.agent.agent_id,
                 miner_hotkey=row.agent.miner_hotkey,
-                name=row.agent.name,
+                name=displayed[row.agent.agent_id][0],
+                name_handle=displayed[row.agent.agent_id][1],
                 version=row.agent.version,
                 status=row_status,
                 artifact_release=artifact_releases[row.agent.agent_id],
@@ -4430,11 +4659,13 @@ def _public_activity_response(
                     else row.agent.screening_reason
                 ),
                 duplicate_of=row.agent.duplicate_of,
-                duplicate_name=(duplicate_metadata or {}).get(
-                    row.agent.duplicate_of, (None, None)
-                )[0],
+                duplicate_name=_public_duplicate_name(
+                    (duplicate_metadata or {}).get(row.agent.duplicate_of),
+                    claims,
+                    strike=strike_colliding_names,
+                ),
                 duplicate_version=(duplicate_metadata or {}).get(
-                    row.agent.duplicate_of, (None, None)
+                    row.agent.duplicate_of, (None, None, None)
                 )[1],
                 review_reason=(
                     (ath_reviews or {})[row.agent.agent_id].reason
@@ -4550,24 +4781,50 @@ def _operations_activity_rows(
 
 async def _duplicate_submission_metadata(
     session: AsyncSession, rows: list[Any]
-) -> dict[UUID, tuple[str, int | None]]:
-    """Resolve safe display metadata for copy-review comparison targets."""
+) -> dict[UUID, tuple[str, int | None, str | None]]:
+    """Resolve stored name, version, and attested owner root for copy targets."""
     duplicate_ids = {
         row.agent.duplicate_of for row in rows if row.agent.duplicate_of is not None
     }
     if not duplicate_ids:
         return {}
-    return {
-        agent_id: (name, version)
-        for agent_id, name, version in (
+    loaded = (
+        (
             await session.execute(
-                select(Agent.agent_id, Agent.name, Agent.version).where(
-                    Agent.agent_id.in_(duplicate_ids)
+                select(
+                    Agent.agent_id,
+                    Agent.name,
+                    Agent.version,
+                    Agent.miner_hotkey,
+                    EvaluationPayment.miner_coldkey,
                 )
+                .outerjoin(
+                    EvaluationPayment,
+                    EvaluationPayment.agent_id == Agent.agent_id,
+                )
+                .where(Agent.agent_id.in_(duplicate_ids))
             )
         )
         .tuples()
         .all()
+    )
+    if not loaded:
+        return {}
+    roots = await attested_emission_owner_roots(
+        session,
+        [
+            (
+                hotkey,
+                emission_owner(miner_hotkey=hotkey, miner_coldkey=coldkey),
+            )
+            for _agent_id, _name, _version, hotkey, coldkey in loaded
+        ],
+    )
+    return {
+        agent_id: (name, version, root)
+        for (agent_id, name, version, _hotkey, _coldkey), root in zip(
+            loaded, roots, strict=True
+        )
     }
 
 
@@ -4773,6 +5030,10 @@ async def activity(
         policy=release_policy,
         now=now,
     )
+    from ditto.api_server.name_claim import expected_netuid as _name_claim_netuid
+    from ditto.db.queries.name_claims import active_handle_claims
+
+    handle_claims = await active_handle_claims(session, netuid=_name_claim_netuid())
     activity_page = await query_public_activity_page(
         session,
         bench_version=active_version,
@@ -4782,6 +5043,9 @@ async def activity(
         downloadable_only=downloadable,
         downloadable_agent_ids=downloadable_agent_ids,
         query=q,
+        reserved_name_stems={
+            stem for stem, claim in handle_claims.items() if claim.status == "upheld"
+        },
         ath_only=review == "ath",
         active_validation_agent_ids=active_validation_agent_ids,
         active_assignment_agent_ids=active_assignment_agent_ids,
@@ -4837,6 +5101,9 @@ async def activity(
         precomputed_total=activity_page.total,
         already_paginated=True,
         precomputed_page_size=limit,
+        handle_claims=handle_claims,
+        owner_roots=await _attested_owner_roots_for_rows(session, rows),
+        strike_colliding_names=True,
     )
 
 
@@ -5047,6 +5314,13 @@ async def operations(
     ath_reviews, ath_composite = await _ath_review_public_snapshot(
         session, activity_rows
     )
+    # Operations keeps stored agents.name; handle annotations still travel so
+    # the operator board can mark a reserved or stricken stem.
+    from ditto.api_server.name_claim import expected_netuid as _name_claim_netuid
+    from ditto.db.queries.name_claims import active_handle_claims
+
+    handle_claims = await active_handle_claims(session, netuid=_name_claim_netuid())
+    owner_roots = await _attested_owner_roots_for_rows(session, activity_rows)
     activity_snapshot = _public_activity_response(
         rows=activity_rows,
         active_work=active_work,
@@ -5085,6 +5359,9 @@ async def operations(
         precomputed_total=activity_page.total,
         already_paginated=True,
         precomputed_page_size=max(1, len(activity_rows)),
+        handle_claims=handle_claims,
+        owner_roots=owner_roots,
+        strike_colliding_names=False,
     )
     validator_snapshot = _validator_heartbeats_response(
         rows=heartbeat_rows,
@@ -5125,6 +5402,7 @@ async def operations(
                 PublicRolloutQueueEntry(
                     agent_id=agent_id,
                     miner_hotkey=row.agent.miner_hotkey,
+                    # Operator rollout queue: stored name, not the public strike.
                     name=row.agent.name,
                     version=row.agent.version,
                     submitted_at=row.agent.created_at,
@@ -5345,13 +5623,25 @@ async def agent_summary(
         if row.agent.duplicate_of is not None
         else None
     )
-    duplicate_name = duplicate[0] if duplicate is not None else None
-    duplicate_version = duplicate[1] if duplicate is not None else None
+    from ditto.api_server.name_claim import expected_netuid as _name_claim_netuid
+    from ditto.db.queries.name_claims import active_handle_claims
+
+    handle_claims = await active_handle_claims(session, netuid=_name_claim_netuid())
+    owner_roots = await _attested_owner_roots_for_rows(session, [row])
+    owner_root = owner_roots.get(
+        agent_id,
+        emission_owner(
+            miner_hotkey=row.agent.miner_hotkey,
+            miner_coldkey=row.miner_coldkey,
+        ),
+    )
+    display_name, name_handle = _public_named(row.agent.name, owner_root, handle_claims)
     return PublicAgentSummary(
         generated_at=now,
         agent_id=agent_id,
         miner_hotkey=row.agent.miner_hotkey,
-        name=row.agent.name,
+        name=display_name,
+        name_handle=name_handle,
         version=row.agent.version,
         status=status,
         submitted_at=row.agent.created_at,
@@ -5365,8 +5655,8 @@ async def agent_summary(
             else row.agent.screening_reason
         ),
         duplicate_of=row.agent.duplicate_of,
-        duplicate_name=duplicate_name,
-        duplicate_version=duplicate_version,
+        duplicate_name=_public_duplicate_name(duplicate, handle_claims, strike=True),
+        duplicate_version=duplicate[1] if duplicate is not None else None,
         review_reason=review.reason if review is not None else row.agent.review_reason,
         review_event=review.event if review is not None else None,
         review_event_at=review.event_at if review is not None else None,
@@ -5374,7 +5664,14 @@ async def agent_summary(
         review_opened_at=review.opened_at if review is not None else None,
         preserved_composite=ath_composites.get(agent_id),
         active_benchmarks=[
-            _public_benchmark_progress(work, now) for work in active_work
+            _public_benchmark_progress(
+                work,
+                now,
+                owner_root=owner_root,
+                handle_claims=handle_claims,
+                strike=True,
+            )
+            for work in active_work
         ],
     )
 
@@ -5545,9 +5842,15 @@ async def agent_pipeline(
             ),
             agent_family_members[0].agent_id,
         )
+        from ditto.api_server.name_claim import expected_netuid as _name_claim_netuid
+        from ditto.db.queries.name_claims import active_handle_claims
+
         submission_family = _public_submission_family(
             agent_family_members,
             representative_agent_id=official_representative_id,
+            handle_claims=await active_handle_claims(
+                session, netuid=_name_claim_netuid()
+            ),
         )
     else:
         submission_family = None

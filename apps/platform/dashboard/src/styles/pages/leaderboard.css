@@ -856,10 +856,12 @@ tbody tr:focus-visible {
 }
 .winner-name .badge,
 .winner-name .prov,
-.winner-name .quorum-badge {
+.winner-name .quorum-badge,
+.winner-name .handle-badge {
   flex: none;
   margin-left: 0;
 }
+
 .family-toggle {
   display: inline-flex;
   align-items: center;
