@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.84.2 (2026-08-17)
+
+### Bug Fixes
+
+- **platform**: Stop efficiency tiebreak saturating at the 1.1 cap
+  ([#893](https://github.com/ditto-assistant/ditto-subnet/pull/893),
+  [`f07720b`](https://github.com/ditto-assistant/ditto-subnet/commit/f07720b96467a11fd2b2f0d71622b8162e95a5a7))
+
+
 ## v0.84.1 (2026-08-17)
 
 ### Bug Fixes
