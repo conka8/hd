@@ -47,6 +47,7 @@ def _entry(
     waves: tuple[float, ...] | None = None,
     efficiency_bonus: float | None = None,
     efficiency_factor: float | None = None,
+    efficiency_curve_version: int | None = None,
 ) -> KothEntry:
     return KothEntry(
         miner_hotkey="5" + str(marker) * 47,
@@ -62,6 +63,7 @@ def _entry(
         confirmation_seeds=seeds,
         efficiency_bonus=efficiency_bonus,
         efficiency_factor=efficiency_factor,
+        efficiency_curve_version=efficiency_curve_version,
     )
 
 
@@ -210,6 +212,83 @@ def test_curve_v3_stderr_scale_is_quality_transform_slope(
     entry = _entry(1, 0.8, minutes=0, bench_version=9, efficiency_factor=factor)
 
     assert _efficiency_stderr_scale(entry) == pytest.approx(expected)
+
+
+def test_curve_v4_unclamped_factor_uses_asymptotic_headroom() -> None:
+    entry = _entry(
+        1,
+        0.997012,
+        minutes=0,
+        bench_version=10,
+        efficiency_factor=1.5,
+        efficiency_curve_version=4,
+    )
+
+    assert effective_composite(entry) == pytest.approx(
+        0.997012 + (1.0 - 0.997012) * (1.0 - 1.0 / 1.5)
+    )
+    assert effective_composite(entry) < 1.0
+    assert _efficiency_stderr_scale(entry) == pytest.approx(1.0 / 1.5)
+
+
+def test_curve_v4_does_not_retie_at_the_old_cap() -> None:
+    cheap = _entry(
+        1,
+        0.997012,
+        minutes=10,
+        bench_version=10,
+        efficiency_factor=1.5,
+        efficiency_curve_version=4,
+    )
+    dear = _entry(
+        2,
+        0.997012,
+        minutes=0,
+        bench_version=10,
+        efficiency_factor=1.1,
+        efficiency_curve_version=4,
+    )
+
+    projection = project_koth([dear, cheap])
+
+    assert projection is not None
+    assert projection.champion == cheap
+    assert effective_composite(cheap) > effective_composite(dear)
+
+
+def test_curve_v4_cannot_cross_a_higher_quality_tier() -> None:
+    cheaper_lower = _entry(
+        1,
+        0.99,
+        minutes=0,
+        bench_version=10,
+        efficiency_factor=100.0,
+        efficiency_curve_version=4,
+    )
+    higher = _entry(
+        2,
+        0.997,
+        minutes=5,
+        bench_version=10,
+        efficiency_factor=1.0,
+        efficiency_curve_version=4,
+    )
+
+    projection = project_koth([cheaper_lower, higher])
+
+    assert effective_composite(cheaper_lower) == pytest.approx(
+        0.99 + (1.0 - 0.99) * (1.0 - 1.0 / 100.0)
+    )
+    assert effective_composite(cheaper_lower) > effective_composite(higher)
+    assert projection is not None
+    assert projection.champion == higher
+    assert projection.raw_leader == higher
+
+
+def test_curve_v3_still_neutralizes_a_factor_above_the_old_cap() -> None:
+    entry = _entry(1, 0.8, minutes=0, bench_version=9, efficiency_factor=1.5)
+
+    assert effective_composite(entry) == pytest.approx(0.8)
 
 
 def test_legacy_bonus_keeps_multiplicative_stderr_scale() -> None:

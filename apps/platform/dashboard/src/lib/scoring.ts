@@ -148,7 +148,7 @@ export function efficiencyBoardStatus(
         "higher-quality agent. Among exact quality ties, each of the " +
         cohortSize +
         " qualified agents is ordered against the cohort's 25th-percentile cost: " +
-        "cheaper earns headroom and dearer receives a bounded tie-break penalty.",
+        "cheaper earns headroom and dearer receives a tie-break penalty.",
     };
   }
   return {
@@ -177,18 +177,20 @@ export interface CurveV3ScoreAdjustment {
 export const CURVE_V3_MIN_FACTOR = 0.85;
 export const CURVE_V3_MAX_FACTOR = 1.1;
 
-/** Reproduce curve-v3's score transform (Bench v9+) from public provenance.
+/** Reproduce a factor-curve score transform (Bench v9+) from public provenance.
  *
  * This is display-only arithmetic: the API's `effective_composite` is the
  * exact-quality secondary key when the fold is active. Authoritative quality
  * remains primary. Legacy v1/v2 bonuses deliberately do not enter this helper
  * because their historical replay remains unchanged. Bench v10 inherits the
- * v9 transform unchanged, so the gate is a floor, not an exact version.
+ * v9 transform, so the gate is a floor, not an exact version. Curve v4 uses
+ * the asymptotic headroom form and accepts factors outside [0.85, 1.10].
  */
 export function curveV3ScoreAdjustment(e: {
   bench_version?: number | null;
   pre_efficiency_composite?: number | null;
   efficiency_factor?: number | null;
+  efficiency_curve_version?: number | null;
 }): CurveV3ScoreAdjustment | null {
   if (
     Number(e.bench_version) < 9 ||
@@ -200,17 +202,24 @@ export function curveV3ScoreAdjustment(e: {
   }
   const quality = Number(e.pre_efficiency_composite);
   const factor = Number(e.efficiency_factor);
+  const curveVersion = Number(e.efficiency_curve_version);
+  const unbounded = Number.isFinite(curveVersion) && curveVersion >= 4;
   if (
     !Number.isFinite(quality) ||
     !Number.isFinite(factor) ||
     quality < 0 ||
     quality > 1 ||
-    factor < CURVE_V3_MIN_FACTOR ||
-    factor > CURVE_V3_MAX_FACTOR
+    factor <= 0 ||
+    (!unbounded && (factor < CURVE_V3_MIN_FACTOR || factor > CURVE_V3_MAX_FACTOR))
   ) {
     return null;
   }
-  const adjusted = factor <= 1 ? quality * factor : quality + (factor - 1) * (1 - quality);
+  const adjusted =
+    factor <= 1
+      ? quality * factor
+      : unbounded
+        ? quality + (1 - quality) * (1 - 1 / factor)
+        : quality + (factor - 1) * (1 - quality);
   return {
     quality,
     factor,
@@ -245,7 +254,7 @@ export interface EfficiencyTieBreakChip {
  * precise number is expected and has room to be explained.
  */
 export function efficiencyTieBreakChipLabel(
-  e: { efficiency_factor?: number | null },
+  e: { efficiency_factor?: number | null; efficiency_curve_version?: number | null },
   opts: { applied: boolean },
 ): EfficiencyTieBreakChip | null {
   if (e.efficiency_factor == null) return null;
@@ -259,7 +268,14 @@ export function efficiencyTieBreakChipLabel(
     return { label: prefix + " · neutral", direction: "neutral", atBound: false };
   }
   const up = factor > 1;
-  const atBound = factor <= CURVE_V3_MIN_FACTOR || factor >= CURVE_V3_MAX_FACTOR;
+  const curveVersion = Number(e.efficiency_curve_version);
+  const unbounded = Number.isFinite(curveVersion) && curveVersion >= 4;
+  // Curve v4 does not apply the [0.85, 1.10] envelope; only v3 (or an
+  // omitted version, which the board still treats as v3) can sit on a bound.
+  const atBound =
+    !unbounded &&
+    (factor <= CURVE_V3_MIN_FACTOR ||
+      (factor >= CURVE_V3_MAX_FACTOR && factor <= CURVE_V3_MAX_FACTOR + 1e-12));
   const bound = atBound ? (up ? " (cap)" : " (floor)") : "";
   return {
     label: prefix + " " + (up ? "▲" : "▼") + " " + magnitude.toFixed(1) + "%" + bound,
@@ -1001,6 +1017,7 @@ export function compositeCalculationRows(e: {
   pre_efficiency_composite?: number | null;
   efficiency_bonus?: number | null;
   efficiency_factor?: number | null;
+  efficiency_curve_version?: number | null;
   efficiency_fold_applied?: boolean;
   effective_composite?: number | null;
   official_composite?: number | null;
@@ -1081,19 +1098,27 @@ export function compositeCalculationRows(e: {
         rows.push({
           k: "Bench v9+ efficiency transform",
           v:
-            scoreAdjustment.mode === "headroom"
+            scoreAdjustment.mode === "headroom" && Number(e.efficiency_curve_version) >= 4
               ? fx(scoreAdjustment.quality) +
-                " + (" +
-                fx(scoreAdjustment.factor) +
-                " − 1) × (1 − " +
+                " + (1 − " +
                 fx(scoreAdjustment.quality) +
+                ") × (1 − 1 / " +
+                fx(scoreAdjustment.factor) +
                 ") = " +
                 fx(scoreAdjustment.adjusted)
-              : fx(scoreAdjustment.quality) +
-                " × " +
-                fx(scoreAdjustment.factor) +
-                " = " +
-                fx(scoreAdjustment.adjusted),
+              : scoreAdjustment.mode === "headroom"
+                ? fx(scoreAdjustment.quality) +
+                  " + (" +
+                  fx(scoreAdjustment.factor) +
+                  " − 1) × (1 − " +
+                  fx(scoreAdjustment.quality) +
+                  ") = " +
+                  fx(scoreAdjustment.adjusted)
+                : fx(scoreAdjustment.quality) +
+                  " × " +
+                  fx(scoreAdjustment.factor) +
+                  " = " +
+                  fx(scoreAdjustment.adjusted),
         });
       }
     } else if (hasBonus) {
