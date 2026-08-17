@@ -2,6 +2,27 @@
 
 <!-- version list -->
 
+## v0.81.0 (2026-08-17)
+
+### Bug Fixes
+
+- **screener**: Degrade unconfigured builder lanes instead of crash-looping
+  ([#890](https://github.com/ditto-assistant/ditto-subnet/pull/890),
+  [`f4f0aa0`](https://github.com/ditto-assistant/ditto-subnet/commit/f4f0aa06c1c6cea790f272b1d9eabf401910bef6))
+
+### Chores
+
+- **infra**: Add a static inventory for the screener capacity controller
+  ([#888](https://github.com/ditto-assistant/ditto-subnet/pull/888),
+  [`69be175`](https://github.com/ditto-assistant/ditto-subnet/commit/69be1756efedb1355d8610902337105d03a05083))
+
+### Features
+
+- **validator**: Publish an allowlisted confirmation failure class
+  ([#889](https://github.com/ditto-assistant/ditto-subnet/pull/889),
+  [`8585055`](https://github.com/ditto-assistant/ditto-subnet/commit/858505561a1d4c31e54cf2e014a665cc9a436dc7))
+
+
 ## v0.80.1 (2026-08-16)
 
 ### Bug Fixes
