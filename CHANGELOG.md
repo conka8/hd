@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v0.84.1 (2026-08-17)
+
+### Bug Fixes
+
+- **screener**: Keep claimed runtime archives until smoke finishes
+  ([#909](https://github.com/ditto-assistant/ditto-subnet/pull/909),
+  [`ed47784`](https://github.com/ditto-assistant/ditto-subnet/commit/ed477845056e18e41ef560ca05d9a4156ff28abd))
+
+### Chores
+
+- **skills**: Promote nested skills to repo-root agents and claude
+  ([#907](https://github.com/ditto-assistant/ditto-subnet/pull/907),
+  [`4844554`](https://github.com/ditto-assistant/ditto-subnet/commit/484455489aeae5e1cc3cf64d84afe99af07897a6))
+
+
 ## v0.84.0 (2026-08-17)
 
 ### Bug Fixes
