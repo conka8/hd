@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v0.83.1 (2026-08-17)
+
+### Bug Fixes
+
+- **confirmation**: Follow the live benchmark and persist failure diagnostics
+  ([#894](https://github.com/ditto-assistant/ditto-subnet/pull/894),
+  [`4f69050`](https://github.com/ditto-assistant/ditto-subnet/commit/4f69050037e194a73c922e61f38ab8e334d83428))
+
+- **validator**: Pay every bench version the fleet can execute
+  ([#897](https://github.com/ditto-assistant/ditto-subnet/pull/897),
+  [`83524c5`](https://github.com/ditto-assistant/ditto-subnet/commit/83524c5169ca9a5d3d48806587383131b76c9324))
+
+### Chores
+
+- **skills**: Symlink repo skills into claude skills
+  ([#896](https://github.com/ditto-assistant/ditto-subnet/pull/896),
+  [`16e6bc7`](https://github.com/ditto-assistant/ditto-subnet/commit/16e6bc7062173a750a091009b796310333ed8131))
+
+
 ## v0.83.0 (2026-08-17)
 
 ### Features
