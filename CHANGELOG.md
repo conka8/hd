@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.83.6 (2026-08-17)
+
+### Bug Fixes
+
+- **screener**: Omit gated targon persistent-workload experiment
+  ([#902](https://github.com/ditto-assistant/ditto-subnet/pull/902),
+  [`f753e76`](https://github.com/ditto-assistant/ditto-subnet/commit/f753e76042d4ef9a75071feedf202846530df000))
+
+- **screener**: Replace leftover targon images before delete
+  ([#903](https://github.com/ditto-assistant/ditto-subnet/pull/903),
+  [`dd8574b`](https://github.com/ditto-assistant/ditto-subnet/commit/dd8574bf5217019c6df768ba5a3dc879782a90d0))
+
+
 ## v0.83.5 (2026-08-17)
 
 ### Bug Fixes
