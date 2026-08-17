@@ -49,6 +49,8 @@ locals {
       google_secret_manager_secret.hmac_secret.secret_id,
       google_secret_manager_secret.github_deploy_key.secret_id,
       google_secret_manager_secret.taostats_api_key.secret_id,
+      google_secret_manager_secret.hippius_access_key_id.secret_id,
+      google_secret_manager_secret.hippius_secret_access_key.secret_id,
     ],
     [for s in google_secret_manager_secret.pylon_open_access_token : s.secret_id],
   )
@@ -332,6 +334,45 @@ resource "google_secret_manager_secret" "taostats_api_key" {
 import {
   to = google_secret_manager_secret.taostats_api_key
   id = "projects/${var.project}/secrets/platform-taostats-api-key"
+}
+
+# Optional Hippius S3 credentials for miner profile pictures. CONTAINER ONLY:
+# operators add versions out of band so the access key never enters Terraform
+# state. The live bucket is the private Hippius bucket `ditto-subnet` (Ansible
+# host_vars). Empty versions leave avatar upload/clear returning 503 without
+# affecting the rest of Platform boot. Access keys must start with hip_.
+resource "google_secret_manager_secret" "hippius_access_key_id" {
+  project   = var.project
+  secret_id = "platform-hippius-access-key-id"
+  replication {
+    auto {}
+  }
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "google_secret_manager_secret" "hippius_secret_access_key" {
+  project   = var.project
+  secret_id = "platform-hippius-secret-access-key"
+  replication {
+    auto {}
+  }
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# Operators may create these containers out of band when adding the first
+# version. Adopt them on the next gcp-platform apply.
+import {
+  to = google_secret_manager_secret.hippius_access_key_id
+  id = "projects/${var.project}/secrets/platform-hippius-access-key-id"
+}
+
+import {
+  to = google_secret_manager_secret.hippius_secret_access_key
+  id = "projects/${var.project}/secrets/platform-hippius-secret-access-key"
 }
 
 # Let the runtime SA read every platform secret above.
