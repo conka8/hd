@@ -76,6 +76,7 @@ class TargonClient:
         authenticated: bool = True,
         expect_text: bool = False,
         retryable: bool = False,
+        timeout_seconds: float | None = None,
     ) -> Any:
         if authenticated and self._api_key is None:
             raise TargonAPIError(
@@ -93,11 +94,10 @@ class TargonClient:
         )
         operation = f"{method} {path.split('?', 1)[0]}"
         attempts = 3 if retryable else 1
+        timeout = self._timeout_seconds if timeout_seconds is None else timeout_seconds
         for attempt in range(attempts):
             try:
-                with urllib.request.urlopen(
-                    request, timeout=self._timeout_seconds
-                ) as response:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
                     body = response.read()
                 break
             except urllib.error.HTTPError as error:
@@ -327,12 +327,35 @@ class TargonClient:
         )
         return value if isinstance(value, dict) else {}
 
-    def delete(self, uid: str) -> None:
+    def _gone(self, uid: str) -> bool:
         try:
-            self._request("DELETE", self._workload_path(f"/{uid}"), retryable=True)
+            state = self.state(uid)
         except TargonAPIError as error:
-            if error.status != 404:
-                raise
+            return error.status == 404
+        return str(state.get("status", "")).casefold() == "deleted"
+
+    def delete(self, uid: str) -> None:
+        # Teardown can exceed the default 15s client timeout. Do not retry
+        # DELETE itself: a second call can race the first teardown. Reconcile
+        # a lost or slow response by polling provider state instead.
+        try:
+            self._request(
+                "DELETE",
+                self._workload_path(f"/{uid}"),
+                timeout_seconds=180.0,
+            )
+        except TargonAPIError as error:
+            if error.status == 404:
+                return
+            timed_out = error.status is None and error.reason == "TimeoutError"
+            deadline = time.monotonic() + (45.0 if timed_out else 0.0)
+            while True:
+                if self._gone(uid):
+                    return
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(5)
+            raise
 
 
 def workload_summary(workload: dict[str, Any]) -> WorkloadSummary:

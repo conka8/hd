@@ -39,6 +39,8 @@ uv sync --group dev
 uv run pytest
 scripts/targon-smoke.sh inventory
 scripts/targon-smoke.sh list
+scripts/targon-smoke.sh sweep-oneshots
+scripts/targon-smoke.sh sweep-oneshots --apply --workers 8
 scripts/targon-smoke.sh kaniko-probe --resource cpu-small --roundtrip
 scripts/targon-smoke.sh runtime-probe
 scripts/targon-smoke.sh source-review-probe --image registry.example/screener@sha256:DIGEST
@@ -69,8 +71,12 @@ credential. The helper verifies the source SHA-256, runs the immutable Kaniko
 executor without push/cache, uploads one bounded tar archive, and asks Platform
 to hash every output byte. The owning GCE screener independently hashes and
 imports the archive, applies the existing gates, then deletes the temporary
-object. Rental deletion failure is recorded after suspension as an operator
-cleanup event; zero replicas is the cost-safety boundary.
+object. Rental deletion is attempted while the workload is still running. Targon
+returns HTTP 500 for DELETE of `suspended`/`error`/`registered` records, so
+those leftovers are redeployed and deleted instead of being left suspended.
+A remaining record is an operator cleanup event. The builder also sweeps
+leftover one-shot rentals on an interval. Zero replicas is the cost-safety
+boundary.
 
 After Platform verifies every archive byte, the trusted controller impersonates
 `ditto-screening-candidate-push` and promotes the exact archive into the private
