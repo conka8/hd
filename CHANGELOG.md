@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.83.0 (2026-08-17)
+
+### Features
+
+- **platform**: Let miners set a signed hotkey profile picture
+  ([#880](https://github.com/ditto-assistant/ditto-subnet/pull/880),
+  [`a2e7d6b`](https://github.com/ditto-assistant/ditto-subnet/commit/a2e7d6b4baf2313380fbd4e7f02f9767d7853da5))
+
+- **platform**: Reserve miner handles via signed claims
+  ([#865](https://github.com/ditto-assistant/ditto-subnet/pull/865),
+  [`8ab46d1`](https://github.com/ditto-assistant/ditto-subnet/commit/8ab46d1056e2f6b765e154828d9cc6056ba2036f))
+
+
 ## v0.82.0 (2026-08-17)
 
 ### Features
