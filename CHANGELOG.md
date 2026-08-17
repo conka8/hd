@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v0.84.0 (2026-08-17)
+
+### Bug Fixes
+
+- **scoring**: Stop charging agents for an unfinished route challenge
+  ([#900](https://github.com/ditto-assistant/ditto-subnet/pull/900),
+  [`446ef91`](https://github.com/ditto-assistant/ditto-subnet/commit/446ef919f4000250fce0e6f033ab05a0b3acaed1))
+
+### Features
+
+- **backroom**: Add ATH precedent search and board-review skill
+  ([#906](https://github.com/ditto-assistant/ditto-subnet/pull/906),
+  [`081a5ca`](https://github.com/ditto-assistant/ditto-subnet/commit/081a5ca08bfa44fd49d691d7a7379d6e69c5871a))
+
+
 ## v0.83.6 (2026-08-17)
 
 ### Bug Fixes
