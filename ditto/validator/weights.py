@@ -239,31 +239,61 @@ def filter_eligible(entries: Sequence[LedgerEntry]) -> list[LedgerEntry]:
     return [e for e in entries if _entry_eligible(e)]
 
 
+# Versions that carry a full-confirmation receipt contract, and may therefore
+# have their ordinary quorum withheld when the Platform serves an enforce marker.
+#
+# A receipt requirement is a per-version contract that a version must *opt into*:
+# it only means something once the confirmation lane actually issues bundles at
+# that version and the profile has been calibrated there. Bench v9 is the only
+# version that ever did. v10 and v11 shipped without the lane following them, so
+# they have no receipts to require, and the confirmation system is planned to
+# return at v12 — add 12 here as part of that work, alongside the Platform-side
+# issuance pins (``apps/platform/ditto/api_server/confirmation_bundles.py`` and
+# the ``bench_version == 9`` predicates around it).
+#
+# This set may be enumerated precisely because it fails OPEN: a version absent
+# from it pays on its ordinary quorum. Do not confuse it with a payable-version
+# allowlist, which must never be enumerated — see :func:`filter_weight_confirmed`.
+RECEIPT_CONTRACT_VERSIONS = frozenset({9})
+
+
 def filter_weight_confirmed(
     entries: Sequence[LedgerEntry], *, enforce: bool = True
 ) -> list[LedgerEntry]:
     """Keep entries whose score contract is payable under the served policy.
 
-    A Bench v9 ordinary quorum is reward authority while confirmation is off or
-    shadowing.  Only the Platform's explicit ``v9_confirmation_mode=enforce``
-    marker makes a full-confirmation receipt mandatory.  Treating the mere
-    presence of v9 as enforce used to drop the whole post-rollout ledger, build
-    an empty weight vector, and leave the previous 100% burn visible on-chain.
+    An entry is withheld only when its version has a receipt contract
+    (:data:`RECEIPT_CONTRACT_VERSIONS`), the Platform served an explicit
+    ``v9_confirmation_mode=enforce`` marker, and the receipt is missing. A v9
+    ordinary quorum is reward authority while confirmation is off or shadowing;
+    treating the mere presence of v9 as enforce used to drop the whole
+    post-rollout ledger, build an empty weight vector, and leave the previous
+    100% burn visible on-chain. The default preserves the stricter behavior for
+    callers that do not possess the signed ledger-level mode.
 
-    Bench v10 has no v9 confirmation receipt contract, so its ordinary quorum
-    is payable. Versions beyond the latest executable contract remain fail
-    closed. The default preserves the stricter v9 behavior for callers that do
-    not possess the signed ledger-level mode.
+    **Every other version is payable on its ordinary quorum, including versions
+    newer than this binary knows about.** This deliberately does not fail closed
+    on an unrecognized future version, for the same reason
+    :func:`compute_weights` refuses a global maximum-version filter: the pool is
+    served by the Platform, older validators ignore the additive ``bench_version``
+    field entirely, and a version gate here diverges the fleet from them. The
+    entry only exists because a quorum of validators that *could* execute that
+    contract signed it, so this layer has nothing to add by second-guessing it.
+
+    Enumerating the *payable* set is a live outage. Bench v11 activated on
+    2026-08-16 with the executable pin (``SUPPORTED_BENCH_VERSIONS``) updated but
+    this predicate still enumerating ``{<9, 9, 10}``: the whole v11 ledger was
+    dropped, every validator took the "no weight-confirmed entries" early return
+    in ``worker.py``, and the fleet stopped calling ``put_weights`` for ~11.7h
+    while a stale v10 vector stayed frozen on-chain paying the wrong champion.
+    Withholding is now opt-in per version; payability never is.
     """
     return [
         entry
         for entry in entries
-        if _entry_version(entry) < 9
-        or _entry_version(entry) == 10
-        or (
-            _entry_version(entry) == 9
-            and (not enforce or getattr(entry, "v9_confirmation", None) is not None)
-        )
+        if _entry_version(entry) not in RECEIPT_CONTRACT_VERSIONS
+        or not enforce
+        or getattr(entry, "v9_confirmation", None) is not None
     ]
 
 
