@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.83.3 (2026-08-17)
+
+### Bug Fixes
+
+- **platform**: Re-cut the rejected-resubmission lexical bar from production data
+  ([#898](https://github.com/ditto-assistant/ditto-subnet/pull/898),
+  [`af0df79`](https://github.com/ditto-assistant/ditto-subnet/commit/af0df79390722268c39d826ca82b1b23cac90ac0))
+
+
 ## v0.83.2 (2026-08-17)
 
 ### Bug Fixes
