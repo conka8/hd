@@ -2,6 +2,35 @@
 
 <!-- version list -->
 
+## v0.86.0 (2026-08-18)
+
+### Bug Fixes
+
+- **screener**: Pass artifact registry creds on skopeo stdin
+  ([#923](https://github.com/ditto-assistant/ditto-subnet/pull/923),
+  [`a1d7046`](https://github.com/ditto-assistant/ditto-subnet/commit/a1d70463eebeed994f61d5b2d570f26c9b6fe993))
+
+- **screener**: Wrap skopeo inspect failures for mypy
+  ([#925](https://github.com/ditto-assistant/ditto-subnet/pull/925),
+  [`854e327`](https://github.com/ditto-assistant/ditto-subnet/commit/854e3275bbe099ec31f9431982b3dcffc7a7a282))
+
+### Chores
+
+- **agents**: Combine backroom review skills
+  ([#919](https://github.com/ditto-assistant/ditto-subnet/pull/919),
+  [`a0b9e07`](https://github.com/ditto-assistant/ditto-subnet/commit/a0b9e0795692cb29cd53934177ddaf9b17c86c14))
+
+### Features
+
+- **platform**: Add dashboard SEO with 30s crawler snapshots
+  ([#924](https://github.com/ditto-assistant/ditto-subnet/pull/924),
+  [`6d33688`](https://github.com/ditto-assistant/ditto-subnet/commit/6d336887f42eaee6bfef20cc2c5c9c05720f4762))
+
+- **screener**: Teach L1 the v12 two-limb and engine bar
+  ([#918](https://github.com/ditto-assistant/ditto-subnet/pull/918),
+  [`28b6303`](https://github.com/ditto-assistant/ditto-subnet/commit/28b63036f332d59abd4b2ffff2b0b5e52ca685cb))
+
+
 ## v0.85.0 (2026-08-18)
 
 ### Bug Fixes
