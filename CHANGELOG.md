@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v0.88.0 (2026-08-18)
+
+### Bug Fixes
+
+- **platform**: Keep a live bench live after holds and rejects
+  ([#931](https://github.com/ditto-assistant/ditto-subnet/pull/931),
+  [`cba27c8`](https://github.com/ditto-assistant/ditto-subnet/commit/cba27c82f375bef5b8cfe7f244c2e6875dba76ff))
+
+- **platform**: Name same-miner rejected ancestors in hold notice
+  ([#928](https://github.com/ditto-assistant/ditto-subnet/pull/928),
+  [`6236a12`](https://github.com/ditto-assistant/ditto-subnet/commit/6236a1286ec6226a0a8c8af33541ab3e773901dd))
+
+- **screener**: Use dest-authfile on skopeo 1.18
+  ([#930](https://github.com/ditto-assistant/ditto-subnet/pull/930),
+  [`729987e`](https://github.com/ditto-assistant/ditto-subnet/commit/729987e81c46caf0eb27493d3dbe8c860bb8aa99))
+
+### Features
+
+- **bench**: Private bench v12 — layered anti-emulation defense
+  ([#932](https://github.com/ditto-assistant/ditto-subnet/pull/932),
+  [`95fc780`](https://github.com/ditto-assistant/ditto-subnet/commit/95fc78076638c750851c72478f011d3f4da2f4ee))
+
+- **screener**: Give L1 Luna a real budget and Backroom MCP debug
+  ([#908](https://github.com/ditto-assistant/ditto-subnet/pull/908),
+  [`afd3be5`](https://github.com/ditto-assistant/ditto-subnet/commit/afd3be5370e2ba40e9d9eab032abb331207cb4d5))
+
+
 ## v0.87.1 (2026-08-18)
 
 ### Bug Fixes
