@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.88.2 (2026-08-18)
+
+### Bug Fixes
+
+- **screener**: Isolate skopeo home under ProtectHome
+  ([#937](https://github.com/ditto-assistant/ditto-subnet/pull/937),
+  [`41d3725`](https://github.com/ditto-assistant/ditto-subnet/commit/41d372513897ae9e84b86eb30970f4127bdfcdb6))
+
+
 ## v0.88.1 (2026-08-18)
 
 ### Bug Fixes
