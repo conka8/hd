@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.86.1 (2026-08-18)
+
+### Bug Fixes
+
+- **screener**: Format runtime smoke or-handled wrap
+  ([#927](https://github.com/ditto-assistant/ditto-subnet/pull/927),
+  [`3666147`](https://github.com/ditto-assistant/ditto-subnet/commit/36661476fd970e60208d951a4cfe7f367d945aef))
+
+- **screener**: Smoke miner archives after gce consume
+  ([#926](https://github.com/ditto-assistant/ditto-subnet/pull/926),
+  [`71f7bee`](https://github.com/ditto-assistant/ditto-subnet/commit/71f7bee839e12c5e97aabac186feae2947d3869a))
+
+
 ## v0.86.0 (2026-08-18)
 
 ### Bug Fixes
