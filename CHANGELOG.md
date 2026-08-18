@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.87.1 (2026-08-18)
+
+### Bug Fixes
+
+- **platform**: Close leftover rollouts without muting current retests
+  ([#929](https://github.com/ditto-assistant/ditto-subnet/pull/929),
+  [`77564ac`](https://github.com/ditto-assistant/ditto-subnet/commit/77564ac0d9c0e6b676f77893c308359f8a9fb2b0))
+
+
 ## v0.87.0 (2026-08-18)
 
 ### Features
