@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.87.0 (2026-08-18)
+
+### Features
+
+- **miner-cli**: Print uvx login and pick local wallets
+  ([#920](https://github.com/ditto-assistant/ditto-subnet/pull/920),
+  [`4d17b28`](https://github.com/ditto-assistant/ditto-subnet/commit/4d17b285e37229673df1b16a8b198e34c5d14e97))
+
+
 ## v0.86.1 (2026-08-18)
 
 ### Bug Fixes
