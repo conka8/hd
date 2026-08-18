@@ -17101,7 +17101,7 @@ export interface components {
              * @default medium
              * @enum {string}
              */
-            critic_reasoning_effort: "low" | "medium";
+            critic_reasoning_effort: "low" | "medium" | "high";
             /**
              * L2 Fallback Models
              * @default [
@@ -17158,6 +17158,22 @@ export interface components {
              * @enum {string}
              */
             mode: "off" | "shadow" | "enforce" | "inherit";
+            /**
+             * Source Review Max Read Bytes
+             * @default 1200000
+             */
+            source_review_max_read_bytes: number;
+            /**
+             * Source Review Max Steps
+             * @default 24
+             */
+            source_review_max_steps: number;
+            /**
+             * Source Review Reasoning Effort
+             * @default high
+             * @enum {string}
+             */
+            source_review_reasoning_effort: "low" | "medium" | "high";
             /**
              * Timeout Seconds
              * @default 900
