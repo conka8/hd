@@ -2,6 +2,51 @@
 
 <!-- version list -->
 
+## v0.85.0 (2026-08-18)
+
+### Bug Fixes
+
+- **dashboard**: Stop scored agent cards from remounting case rows
+  ([#917](https://github.com/ditto-assistant/ditto-subnet/pull/917),
+  [`42bc1bf`](https://github.com/ditto-assistant/ditto-subnet/commit/42bc1bfad1c3c605f5711a8031365e0cb3a5de90))
+
+- **platform**: Keep desired bench live after a reject
+  ([#913](https://github.com/ditto-assistant/ditto-subnet/pull/913),
+  [`da494a3`](https://github.com/ditto-assistant/ditto-subnet/commit/da494a3990a1c0866d2d0b6441136972a5f3d4b4))
+
+- **screener**: Promote kaniko oci tars for targon smoke
+  ([#912](https://github.com/ditto-assistant/ditto-subnet/pull/912),
+  [`b7c9a82`](https://github.com/ditto-assistant/ditto-subnet/commit/b7c9a82f58314e411f3ac04353b41655280e38b9))
+
+- **screener**: Treat targon delete 137 bounce as torn down
+  ([#910](https://github.com/ditto-assistant/ditto-subnet/pull/910),
+  [`aad1272`](https://github.com/ditto-assistant/ditto-subnet/commit/aad1272415d63fc2c3c4499f7846482aa9754c46))
+
+### Chores
+
+- **docs**: Document handle claims and avatars in the miner CLI
+  ([#915](https://github.com/ditto-assistant/ditto-subnet/pull/915),
+  [`81f0b97`](https://github.com/ditto-assistant/ditto-subnet/commit/81f0b97f7def4900ba286d3a5b5cec0b68453879))
+
+- **screener**: Flatten post-delete 404 return
+  ([#916](https://github.com/ditto-assistant/ditto-subnet/pull/916),
+  [`b509fc8`](https://github.com/ditto-assistant/ditto-subnet/commit/b509fc889a19beeeb06a48f7fe4e3fe9afd7d8ab))
+
+- **screener**: Format kaniko oci archive helper
+  ([#914](https://github.com/ditto-assistant/ditto-subnet/pull/914),
+  [`4cae012`](https://github.com/ditto-assistant/ditto-subnet/commit/4cae012fede4bce568d4642f069127941e8d4cd4))
+
+- **screener**: Format targon 137 teardown test
+  ([#911](https://github.com/ditto-assistant/ditto-subnet/pull/911),
+  [`eae1a60`](https://github.com/ditto-assistant/ditto-subnet/commit/eae1a605932e4d68a6d9aa9a2a95a9205bac4884))
+
+### Features
+
+- Add miner profiles, hotkey sign-in, and hosted MCP
+  ([#899](https://github.com/ditto-assistant/ditto-subnet/pull/899),
+  [`70340f4`](https://github.com/ditto-assistant/ditto-subnet/commit/70340f450d71b1d04f4e5d4b18f29126a40f9ce5))
+
+
 ## v0.84.2 (2026-08-17)
 
 ### Bug Fixes
