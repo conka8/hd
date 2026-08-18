@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v0.89.0 (2026-08-18)
+
+### Bug Fixes
+
+- **validator**: Verify confirmation receipts on every confirmation bench version
+  ([#938](https://github.com/ditto-assistant/ditto-subnet/pull/938),
+  [`c915961`](https://github.com/ditto-assistant/ditto-subnet/commit/c91596145157cc5de2a545b9d7811aee059e1f95))
+
+### Features
+
+- **platform**: Use miner avatars as Open Graph images
+  ([#939](https://github.com/ditto-assistant/ditto-subnet/pull/939),
+  [`d80dc94`](https://github.com/ditto-assistant/ditto-subnet/commit/d80dc94aae9ab7ac756b8dcc6342c3c53cd8428a))
+
+
 ## v0.88.2 (2026-08-18)
 
 ### Bug Fixes
