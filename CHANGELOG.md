@@ -2,6 +2,58 @@
 
 <!-- version list -->
 
+## v0.88.1 (2026-08-18)
+
+### Bug Fixes
+
+- **confirmation**: Carry bench_version through the confirmation wire
+  ([#934](https://github.com/ditto-assistant/ditto-subnet/pull/934),
+  [`de1b8e4`](https://github.com/ditto-assistant/ditto-subnet/commit/de1b8e4fddfb0356a972eb41fe0b5f38220ad142))
+
+### Chores
+
+- **agents**: Add Dependabot security-review skill
+  ([#933](https://github.com/ditto-assistant/ditto-subnet/pull/933),
+  [`2cc5ed6`](https://github.com/ditto-assistant/ditto-subnet/commit/2cc5ed6a367f35d513d4d6b3bd5d849b15dad315))
+
+- **agents**: Add the bench-version-bump skill
+  ([#935](https://github.com/ditto-assistant/ditto-subnet/pull/935),
+  [`d108d1a`](https://github.com/ditto-assistant/ditto-subnet/commit/d108d1abc289f2c42e1444d8ac7f421752bf83bf))
+
+- **deps**: Bump golang.org/x/sys from 0.29.0 to 0.47.0 in /services/dittobench-api
+  ([#725](https://github.com/ditto-assistant/ditto-subnet/pull/725),
+  [`89f1b7a`](https://github.com/ditto-assistant/ditto-subnet/commit/89f1b7a177575b4f93659015ee882ea64e4dc06a))
+
+- **deps**: Bump hashicorp/setup-packer in the actions group
+  ([#732](https://github.com/ditto-assistant/ditto-subnet/pull/732),
+  [`eeadf3c`](https://github.com/ditto-assistant/ditto-subnet/commit/eeadf3cd2c4a54019db57dbccd87a09010a91120))
+
+- **deps**: Bump numpy from 2.5.1 to 2.5.2 in /workers/screener
+  ([#728](https://github.com/ditto-assistant/ditto-subnet/pull/728),
+  [`50c6190`](https://github.com/ditto-assistant/ditto-subnet/commit/50c61904e44246932cb40590bace16b19c3df100))
+
+- **deps-dev**: Bump @testing-library/jest-dom from 7.0.0 to 7.0.1 in /apps/platform/dashboard
+  ([#730](https://github.com/ditto-assistant/ditto-subnet/pull/730),
+  [`6911f7b`](https://github.com/ditto-assistant/ditto-subnet/commit/6911f7ba7ea051608c1ae34b02275af75700b6a4))
+
+- **deps-dev**: Bump @types/node from 26.1.2 to 26.2.0 in /apps/platform/dashboard
+  ([#731](https://github.com/ditto-assistant/ditto-subnet/pull/731),
+  [`9fc1ac3`](https://github.com/ditto-assistant/ditto-subnet/commit/9fc1ac3a6ffbb442c2e7f9416c01c6c66ffe934a))
+
+- **deps-dev**: Bump oxlint from 1.77.0 to 1.78.0 in /apps/platform/dashboard
+  ([#726](https://github.com/ditto-assistant/ditto-subnet/pull/726),
+  [`0f409b6`](https://github.com/ditto-assistant/ditto-subnet/commit/0f409b679a759e2c0720a7cd35a7a8a2a8a2f3fb))
+
+- **deps-dev**: Bump vite from 8.2.0 to 8.2.1 in /apps/platform/dashboard
+  ([#729](https://github.com/ditto-assistant/ditto-subnet/pull/729),
+  [`9913a4e`](https://github.com/ditto-assistant/ditto-subnet/commit/9913a4ee031c2a48369829fbfd48bd59f4eac34a))
+
+- **deps-dev**: Update setuptools requirement from <84,>=77 to >=77,<85 in
+  /services/dittobench-api/integrations/hermes
+  ([#727](https://github.com/ditto-assistant/ditto-subnet/pull/727),
+  [`94ea5fd`](https://github.com/ditto-assistant/ditto-subnet/commit/94ea5fdefee485272b252f4bf1dc87ef280bc0d9))
+
+
 ## v0.88.0 (2026-08-18)
 
 ### Bug Fixes
