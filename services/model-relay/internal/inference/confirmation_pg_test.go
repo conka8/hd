@@ -124,7 +124,7 @@ func (f *confirmationFixture) signedHeaders(generation int64, nonce uuid.UUID, b
 	}
 }
 
-// confirmationChatBody carries the mandatory frozen-route provider pin.
+// confirmationChatBody carries the frozen Azure/judge provider pin.
 func confirmationChatBody() string {
 	return `{"model":"` + confirmationTestModel + `",` +
 		`"messages":[{"role":"user","content":"judge this"}],"max_tokens":64,` +
@@ -133,25 +133,33 @@ func confirmationChatBody() string {
 		`"allow_fallbacks":false,"require_parameters":true,"data_collection":"deny"}}`
 }
 
+// confirmationReaderChatBody carries the scoring-lane throughput aggregate pin.
+func confirmationReaderChatBody() string {
+	return `{"model":"` + confirmationTestModel + `",` +
+		`"messages":[{"role":"user","content":"judge this"}],"max_tokens":64,` +
+		`"provider":{"sort":"throughput","ignore":["coreweave"],` +
+		`"allow_fallbacks":true,"data_collection":"deny"}}`
+}
+
 func TestLockedConfirmationChatPayloadPreservesLaneTokenField(t *testing.T) {
-	provider := confirmationProviderPreferences(confirmationTestProvider)
-	payload := map[string]any{
-		"model":      confirmationTestModel,
-		"messages":   []any{map[string]any{"role": "user", "content": "memory"}},
-		"max_tokens": json.Number("64"),
-		"provider":   provider,
-	}
 	for _, testCase := range []struct {
 		lane    string
+		route   string
 		present string
 		absent  string
 	}{
-		{lane: "judge", present: "max_completion_tokens", absent: "max_tokens"},
-		{lane: "reader", present: "max_tokens", absent: "max_completion_tokens"},
+		{lane: "judge", route: confirmationTestProvider, present: "max_completion_tokens", absent: "max_tokens"},
+		{lane: "reader", route: confirmationReaderRouteProvider, present: "max_tokens", absent: "max_completion_tokens"},
 	} {
 		t.Run(testCase.lane, func(t *testing.T) {
+			payload := map[string]any{
+				"model":      confirmationTestModel,
+				"messages":   []any{map[string]any{"role": "user", "content": "memory"}},
+				"max_tokens": json.Number("64"),
+				"provider":   confirmationChatProviderPreferences(testCase.lane, testCase.route),
+			}
 			grant := postgres.ConfirmationInferenceGrant{
-				Lane: testCase.lane, Model: confirmationTestModel, RouteProvider: confirmationTestProvider,
+				Lane: testCase.lane, Model: confirmationTestModel, RouteProvider: testCase.route,
 			}
 			upstream, maxTokens, herr := lockedConfirmationChatPayload(payload, &grant, 128)
 			if herr != nil || maxTokens != 64 || upstream[testCase.present] != 64 {
@@ -165,6 +173,121 @@ func TestLockedConfirmationChatPayloadPreservesLaneTokenField(t *testing.T) {
 				t.Fatalf("%s lost ZDR: %v", testCase.lane, lockedProvider)
 			}
 		})
+	}
+}
+
+func TestLockedConfirmationChatPayloadAppliesGptOssReasoningContract(t *testing.T) {
+	provider := confirmationChatProviderPreferences("reader", confirmationReaderRouteProvider)
+	grant := postgres.ConfirmationInferenceGrant{
+		Lane: "reader", Model: "openai/gpt-oss-20b", RouteProvider: confirmationReaderRouteProvider,
+	}
+
+	t.Run("omitted reasoning defaults to medium exclude", func(t *testing.T) {
+		payload := map[string]any{
+			"model": "openai/gpt-oss-20b",
+			"messages": []any{
+				map[string]any{"role": "user", "content": "memory"},
+			},
+			"max_tokens": json.Number("64"),
+			"user":       "miner",
+			"metadata":   map[string]any{"k": "v"},
+			"provider":   provider,
+		}
+		upstream, maxTokens, herr := lockedConfirmationChatPayload(payload, &grant, 128)
+		if herr != nil || maxTokens != 64 {
+			t.Fatalf("payload err=%v max=%d", herr, maxTokens)
+		}
+		reasoning, _ := upstream["reasoning"].(map[string]any)
+		if reasoning["effort"] != "medium" || reasoning["exclude"] != true {
+			t.Fatalf("reasoning=%v", upstream["reasoning"])
+		}
+		if _, found := upstream["user"]; found {
+			t.Fatalf("dropped user leaked: %v", upstream)
+		}
+		if _, found := upstream["metadata"]; found {
+			t.Fatalf("dropped metadata leaked: %v", upstream)
+		}
+		if _, found := upstream["reasoning_effort"]; found {
+			t.Fatalf("reasoning_effort alias leaked: %v", upstream)
+		}
+		lockedProvider, _ := upstream["provider"].(map[string]any)
+		if lockedProvider["zdr"] != true || lockedProvider["sort"] != "throughput" {
+			t.Fatalf("lost throughput ZDR route: %v", lockedProvider)
+		}
+		if _, found := lockedProvider["only"]; found {
+			t.Fatalf("restored vendor pin: %v", lockedProvider)
+		}
+	})
+
+	t.Run("reasoning_effort alias is canonicalized", func(t *testing.T) {
+		payload := map[string]any{
+			"model":            "openai/gpt-oss-20b",
+			"messages":         []any{map[string]any{"role": "user", "content": "memory"}},
+			"max_tokens":       json.Number("64"),
+			"reasoning_effort": "high",
+			"provider":         provider,
+		}
+		upstream, _, herr := lockedConfirmationChatPayload(payload, &grant, 128)
+		if herr != nil {
+			t.Fatalf("payload err=%v", herr)
+		}
+		if _, found := upstream["reasoning_effort"]; found {
+			t.Fatalf("reasoning_effort alias leaked: %v", upstream)
+		}
+		reasoning, _ := upstream["reasoning"].(map[string]any)
+		if reasoning["effort"] != "high" || reasoning["exclude"] != true {
+			t.Fatalf("reasoning=%v", upstream["reasoning"])
+		}
+	})
+
+	t.Run("conflicting aliases fail closed", func(t *testing.T) {
+		payload := map[string]any{
+			"model":            "openai/gpt-oss-20b",
+			"messages":         []any{map[string]any{"role": "user", "content": "memory"}},
+			"max_tokens":       json.Number("64"),
+			"reasoning":        map[string]any{"effort": "low"},
+			"reasoning_effort": "high",
+			"provider":         provider,
+		}
+		_, _, herr := lockedConfirmationChatPayload(payload, &grant, 128)
+		if herr == nil || herr.status != 400 || herr.message != "conflicting reasoning effort" {
+			t.Fatalf("conflict err=%v", herr)
+		}
+	})
+
+	t.Run("non-oss judge keeps no reasoning block", func(t *testing.T) {
+		judge := postgres.ConfirmationInferenceGrant{
+			Lane: "judge", Model: confirmationTestModel, RouteProvider: confirmationTestProvider,
+		}
+		payload := map[string]any{
+			"model":      confirmationTestModel,
+			"messages":   []any{map[string]any{"role": "user", "content": "memory"}},
+			"max_tokens": json.Number("64"),
+			"provider":   confirmationProviderPreferences(confirmationTestProvider),
+		}
+		upstream, _, herr := lockedConfirmationChatPayload(payload, &judge, 128)
+		if herr != nil {
+			t.Fatalf("payload err=%v", herr)
+		}
+		if _, found := upstream["reasoning"]; found {
+			t.Fatalf("judge gained reasoning: %v", upstream)
+		}
+	})
+}
+
+func TestLockedConfirmationChatPayloadRejectsReaderVendorPin(t *testing.T) {
+	payload := map[string]any{
+		"model":      "openai/gpt-oss-20b",
+		"messages":   []any{map[string]any{"role": "user", "content": "memory"}},
+		"max_tokens": json.Number("64"),
+		"provider":   confirmationProviderPreferences("deepinfra"),
+	}
+	grant := postgres.ConfirmationInferenceGrant{
+		Lane: "reader", Model: "openai/gpt-oss-20b", RouteProvider: confirmationReaderRouteProvider,
+	}
+	_, _, herr := lockedConfirmationChatPayload(payload, &grant, 128)
+	if herr == nil || herr.status != 403 || herr.message != "confirmation route is not permitted" {
+		t.Fatalf("vendor pin: %+v", herr)
 	}
 }
 
@@ -273,7 +396,7 @@ func TestConfirmationChatProofFailures(t *testing.T) {
 	upstream := fakeConfirmationUpstream(t, nil)
 	defer upstream.Close()
 	f := newConfirmationFixture(t, chatTestConfig(t, upstream.URL), "reader", confirmationTestModel, "openrouter")
-	body := []byte(confirmationChatBody())
+	body := []byte(confirmationReaderChatBody())
 
 	t.Run("proof over different bytes", func(t *testing.T) {
 		headers := f.signedHeaders(1, uuid.New(), body)
@@ -490,14 +613,12 @@ func TestConfirmationChatRetriesBackpressureOnFrozenRoute(t *testing.T) {
 			t.Fatalf("decode upstream payload: %v", err)
 		}
 		provider, _ := payload["provider"].(map[string]any)
-		if provider["zdr"] != true || provider["allow_fallbacks"] != false {
+		if provider["zdr"] != true || provider["allow_fallbacks"] != true ||
+			provider["sort"] != "throughput" {
 			t.Errorf("attempt %d widened frozen route: %v", calls, provider)
 		}
-		only, _ := provider["only"].([]any)
-		order, _ := provider["order"].([]any)
-		if len(only) != 1 || only[0] != confirmationTestProvider ||
-			len(order) != 1 || order[0] != confirmationTestProvider {
-			t.Errorf("attempt %d changed provider pin: %v", calls, provider)
+		if _, found := provider["only"]; found {
+			t.Errorf("attempt %d restored vendor pin: %v", calls, provider)
 		}
 		if calls < confirmationReaderBackpressureMaxAttempts {
 			if calls == 1 {
@@ -525,7 +646,7 @@ func TestConfirmationChatRetriesBackpressureOnFrozenRoute(t *testing.T) {
 	f.deps.Sleep = func(_ context.Context, delay time.Duration) { sleeps = append(sleeps, delay) }
 
 	nonce := uuid.New()
-	body := []byte(confirmationChatBody())
+	body := []byte(confirmationReaderChatBody())
 	w := serve(f.deps, proxyRequest(confirmationChatPath, string(body), f.signedHeaders(1, nonce, body)))
 	if w.Code != http.StatusOK {
 		t.Fatalf("retried completion: %d %s", w.Code, w.Body.String())
@@ -609,7 +730,8 @@ func TestConfirmationChatRetriesOnlyPreProviderRouteMiss(t *testing.T) {
 			t.Fatalf("decode upstream payload: %v", err)
 		}
 		provider, _ := payload["provider"].(map[string]any)
-		if provider["zdr"] != true || provider["allow_fallbacks"] != false {
+		if provider["zdr"] != true || provider["allow_fallbacks"] != true ||
+			provider["sort"] != "throughput" {
 			t.Errorf("attempt %d widened frozen route: %v", calls, provider)
 		}
 		if calls == 1 {
@@ -632,7 +754,7 @@ func TestConfirmationChatRetriesOnlyPreProviderRouteMiss(t *testing.T) {
 	f.deps.Sleep = func(_ context.Context, delay time.Duration) { sleeps = append(sleeps, delay) }
 
 	nonce := uuid.New()
-	body := []byte(confirmationChatBody())
+	body := []byte(confirmationReaderChatBody())
 	w := serve(f.deps, proxyRequest(confirmationChatPath, string(body), f.signedHeaders(1, nonce, body)))
 	if w.Code != http.StatusOK {
 		t.Fatalf("route-miss recovery: %d %s", w.Code, w.Body.String())
@@ -676,7 +798,7 @@ func TestConfirmationChatPreProviderRouteMissExhaustionSettlesOnce(t *testing.T)
 	f := newConfirmationFixture(t, chatTestConfig(t, upstream.URL), "reader", confirmationTestModel, "openrouter")
 
 	nonce := uuid.New()
-	body := []byte(confirmationChatBody())
+	body := []byte(confirmationReaderChatBody())
 	w := serve(f.deps, proxyRequest(confirmationChatPath, string(body), f.signedHeaders(1, nonce, body)))
 	expectEnvelope(t, w, 502, relayhttp.CodeHTTPException, "confirmation provider unavailable")
 	if calls != providerMaxAttempts {
@@ -757,7 +879,7 @@ func TestConfirmationChatBackpressureExhaustionSettlesOnce(t *testing.T) {
 	f.deps.Sleep = func(context.Context, time.Duration) {}
 
 	nonce := uuid.New()
-	body := []byte(confirmationChatBody())
+	body := []byte(confirmationReaderChatBody())
 	w := serve(f.deps, proxyRequest(confirmationChatPath, string(body), f.signedHeaders(1, nonce, body)))
 	expectEnvelope(t, w, 502, relayhttp.CodeHTTPException, "confirmation provider unavailable")
 	if calls != confirmationReaderBackpressureMaxAttempts {
@@ -840,7 +962,7 @@ func TestConfirmationChatDoesNotRetryReceiptBearingBackpressure(t *testing.T) {
 	f := newConfirmationFixture(t, chatTestConfig(t, upstream.URL), "reader", confirmationTestModel, "openrouter")
 
 	nonce := uuid.New()
-	body := []byte(confirmationChatBody())
+	body := []byte(confirmationReaderChatBody())
 	w := serve(f.deps, proxyRequest(confirmationChatPath, string(body), f.signedHeaders(1, nonce, body)))
 	expectEnvelope(t, w, 502, relayhttp.CodeHTTPException, "confirmation provider unavailable")
 	if calls != 1 {
@@ -880,7 +1002,7 @@ func TestConfirmationChatDoesNotRetryAmbiguousBackpressureShapes(t *testing.T) {
 			f := newConfirmationFixture(t, chatTestConfig(t, upstream.URL), "reader", confirmationTestModel, "openrouter")
 
 			nonce := uuid.New()
-			body := []byte(confirmationChatBody())
+			body := []byte(confirmationReaderChatBody())
 			w := serve(f.deps, proxyRequest(confirmationChatPath, string(body), f.signedHeaders(1, nonce, body)))
 			expectEnvelope(t, w, 502, relayhttp.CodeHTTPException, "confirmation provider unavailable")
 			if calls != 1 {
@@ -900,7 +1022,7 @@ func TestConfirmationChatDoesNotRetryTerminalProviderRejection(t *testing.T) {
 	defer upstream.Close()
 	f := newConfirmationFixture(t, chatTestConfig(t, upstream.URL), "reader", confirmationTestModel, "openrouter")
 
-	body := []byte(confirmationChatBody())
+	body := []byte(confirmationReaderChatBody())
 	w := serve(f.deps, proxyRequest(confirmationChatPath, string(body), f.signedHeaders(1, uuid.New(), body)))
 	expectEnvelope(t, w, 502, relayhttp.CodeHTTPException, "confirmation provider unavailable")
 	if calls != 1 {
@@ -950,7 +1072,7 @@ func TestConfirmationChatSettlementExhaustsSpentBudget(t *testing.T) {
 	testutil.SeedSQL(t, f.pool,
 		`UPDATE confirmation_inference_grants SET request_count = request_budget - 1 WHERE grant_id = $1`, f.grantID)
 
-	body := []byte(confirmationChatBody())
+	body := []byte(confirmationReaderChatBody())
 	w := serve(f.deps, proxyRequest(confirmationChatPath, string(body), f.signedHeaders(1, uuid.New(), body)))
 	if w.Code != 200 {
 		t.Fatalf("last budgeted call must succeed: %d %s", w.Code, w.Body.String())

@@ -2471,16 +2471,25 @@ def _confirmation_headers(
 def _locked_confirmation_chat_payload(
     payload: Any, *, grant: Any, max_output_tokens: int
 ) -> tuple[dict[str, Any], int]:
+    """Lock the confirmation chat route and apply the scoring-lane gpt-oss contract."""
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="invalid confirmation request")
     provider = payload.get("provider")
-    expected_provider = {
-        "only": [grant.route_provider],
-        "order": [grant.route_provider],
-        "allow_fallbacks": False,
-        "require_parameters": True,
-        "data_collection": "deny",
-    }
+    if grant.lane == "reader":
+        expected_provider = {
+            "sort": "throughput",
+            "ignore": ["coreweave"],
+            "allow_fallbacks": True,
+            "data_collection": "deny",
+        }
+    else:
+        expected_provider = {
+            "only": [grant.route_provider],
+            "order": [grant.route_provider],
+            "allow_fallbacks": False,
+            "require_parameters": True,
+            "data_collection": "deny",
+        }
     if provider != expected_provider:
         raise HTTPException(
             status_code=403, detail="confirmation route is not permitted"
@@ -2495,6 +2504,27 @@ def _locked_confirmation_chat_payload(
         )
     max_tokens = _output_token_limit(without_provider, max_output_tokens)
     upstream = dict(without_provider)
+    # Same sanitization as the ordinary scoring lane. The reader uses that
+    # lane's throughput aggregate; forwarding gpt-oss aliases still hard-400s.
+    # The official judge stays Azure-pinned.
+    for field in _DROPPED_REQUEST_FIELDS:
+        upstream.pop(field, None)
+    for field in (
+        "best_of",
+        "reasoning_effort",
+        "include_reasoning",
+        "service_tier",
+        "prompt_cache_key",
+    ):
+        upstream.pop(field, None)
+    messages = upstream.get("messages")
+    if isinstance(messages, list):
+        upstream["messages"] = [
+            {key: value for key, value in message.items() if key != "name"}
+            if isinstance(message, dict) and message.get("role") == "tool"
+            else message
+            for message in messages
+        ]
     upstream["model"] = grant.model
     if grant.lane == "judge":
         upstream["max_completion_tokens"] = max_tokens
@@ -2504,6 +2534,13 @@ def _locked_confirmation_chat_payload(
         upstream.pop("max_completion_tokens", None)
     upstream["n"] = 1
     upstream["stream"] = False
+    reasoning = _benchmark_reasoning_for_request(
+        without_provider, model=grant.model, bench_version=9
+    )
+    if reasoning is None:
+        upstream.pop("reasoning", None)
+    else:
+        upstream["reasoning"] = reasoning
     upstream["provider"] = {**expected_provider, "zdr": True}
     upstream["usage"] = {"include": True}
     return upstream, max_tokens
@@ -2632,7 +2669,10 @@ async def proxy_confirmation_chat_completions(
         receipt_provider = _upstream_provider(decoded)
         usage = _bounded_usage(decoded)
         cost_microusd = _bounded_provider_cost(decoded) or -1
-        if receipt_provider != expected_provider or usage is None or cost_microusd < 0:
+        provider_matches = bool(receipt_provider) and (
+            grant.lane != "judge" or receipt_provider == expected_provider
+        )
+        if not provider_matches or usage is None or cost_microusd < 0:
             raise HTTPException(status_code=502, detail="provider identity mismatch")
         prompt_tokens, completion_tokens, _ = usage
         trusted = _public_provider_response(decoded)

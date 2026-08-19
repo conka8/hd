@@ -124,9 +124,25 @@ func pythonJSONEqual(actual, expected any) bool {
 	return false
 }
 
-// confirmationProviderPreferences is the frozen route pin the caller must
-// echo verbatim (dict equality) and the base of what goes upstream.
-func confirmationProviderPreferences(routeProvider string) map[string]any {
+// confirmationReaderRouteProvider is the frozen profile's reader routing
+// identity. It is not an OpenRouter slug: the reader uses the scoring-lane
+// throughput aggregate (every ZDR provider except CoreWeave).
+const confirmationReaderRouteProvider = "throughput"
+
+// confirmationChatProviderPreferences is the frozen route pin the caller must
+// echo verbatim (dict equality) and the base of what goes upstream. The
+// reader matches the scoring LLM relay: sort by throughput, ignore CoreWeave,
+// allow OpenRouter fallbacks, deny data collection. The official judge stays
+// Azure-pinned. The relay adds zdr=true after the echo check.
+func confirmationChatProviderPreferences(lane, routeProvider string) map[string]any {
+	if lane == "reader" {
+		return map[string]any{
+			"sort":            "throughput",
+			"ignore":          []any{"coreweave"},
+			"allow_fallbacks": true,
+			"data_collection": "deny",
+		}
+	}
 	return map[string]any{
 		"only":               []any{routeProvider},
 		"order":              []any{routeProvider},
@@ -136,18 +152,31 @@ func confirmationProviderPreferences(routeProvider string) map[string]any {
 	}
 }
 
+// confirmationProviderPreferences is the judge/Azure pin. Tests that need the
+// reader aggregate should call confirmationChatProviderPreferences.
+func confirmationProviderPreferences(routeProvider string) map[string]any {
+	return confirmationChatProviderPreferences("judge", routeProvider)
+}
+
+// confirmationInstrumentBenchVersion is the LongMem confirmation profile's
+// instrument epoch. The reader model is openai/gpt-oss-20b, which OpenRouter
+// hard-400s unless the scoring-lane reasoning contract is applied: nested
+// reasoning.effort with exclude=true, and no sibling reasoning_effort alias.
+const confirmationInstrumentBenchVersion int32 = 9
+
 // lockedConfirmationChatPayload mirrors _locked_confirmation_chat_payload:
 // exact provider-pin equality, schema validation of the remainder, the
 // grant-locked model, and the forced upstream shape (zdr added, usage
-// included, n=1, stream false). Unlike the ordinary lane it does NOT strip
-// dropped request fields or tool-message names, and applies no reasoning
-// contract — the Python helper forwards the remainder as-is.
+// included, n=1, stream false). It also applies the same gpt-oss reasoning
+// contract and inert-field stripping as the ordinary scoring lane. The reader
+// uses the scoring-lane throughput aggregate; forwarding scoring-lane aliases
+// would still 400 gpt-oss-20b. The official judge stays Azure-pinned.
 func lockedConfirmationChatPayload(decoded any, grant *postgres.ConfirmationInferenceGrant, maxOutputTokens int) (map[string]any, int, *httpError) {
 	payload, isObject := decoded.(map[string]any)
 	if !isObject {
 		return nil, 0, httpErrorf(400, "invalid confirmation request")
 	}
-	expectedProvider := confirmationProviderPreferences(grant.RouteProvider)
+	expectedProvider := confirmationChatProviderPreferences(grant.Lane, grant.RouteProvider)
 	if !pythonJSONEqual(payload["provider"], expectedProvider) {
 		return nil, 0, httpErrorf(403, "confirmation route is not permitted")
 	}
@@ -171,6 +200,32 @@ func lockedConfirmationChatPayload(decoded any, grant *postgres.ConfirmationInfe
 	for key, value := range withoutProvider {
 		upstream[key] = value
 	}
+	for field := range droppedRequestFields {
+		delete(upstream, field)
+	}
+	for _, field := range []string{
+		"best_of", "reasoning_effort", "include_reasoning", "service_tier", "prompt_cache_key",
+	} {
+		delete(upstream, field)
+	}
+	if messages, ok := upstream["messages"].([]any); ok {
+		stripped := make([]any, len(messages))
+		for i, raw := range messages {
+			message, ok := raw.(map[string]any)
+			if ok && message["role"] == "tool" {
+				clean := make(map[string]any, len(message))
+				for k, v := range message {
+					if k != "name" {
+						clean[k] = v
+					}
+				}
+				stripped[i] = clean
+			} else {
+				stripped[i] = raw
+			}
+		}
+		upstream["messages"] = stripped
+	}
 	upstream["model"] = grant.Model
 	if grant.Lane == "judge" {
 		upstream["max_completion_tokens"] = maxTokens
@@ -181,6 +236,17 @@ func lockedConfirmationChatPayload(decoded any, grant *postgres.ConfirmationInfe
 	}
 	upstream["n"] = 1
 	upstream["stream"] = false
+	reasoning, herr := benchmarkReasoningForRequest(
+		withoutProvider, grant.Model, confirmationInstrumentBenchVersion,
+	)
+	if herr != nil {
+		return nil, 0, herr
+	}
+	if reasoning == nil {
+		delete(upstream, "reasoning")
+	} else {
+		upstream["reasoning"] = reasoning
+	}
 	pinned := make(map[string]any, len(expectedProvider)+1)
 	for key, value := range expectedProvider {
 		pinned[key] = value
@@ -393,7 +459,9 @@ func finishConfirmationInferenceRequest(ctx context.Context, q *postgres.Queries
 	if request.Status != "started" || int64(request.Generation) != p.generation {
 		return false, nil
 	}
-	providerMatches := !p.upstreamProvider.Valid || p.upstreamProvider.String == grant.ReceiptProvider
+	providerMatches := !p.upstreamProvider.Valid ||
+		(grant.Lane != "judge" && len(p.upstreamProvider.String) >= 1 && len(p.upstreamProvider.String) <= 120) ||
+		p.upstreamProvider.String == grant.ReceiptProvider
 	costFits := grant.CostMicrousd+p.costMicrousd <= grant.CostBudgetMicrousd
 	// Overflow-safe form of prompt+completion <= max_chargeable (Python
 	// compares with arbitrary-precision ints).
@@ -726,7 +794,9 @@ func (d *Deps) handleConfirmationChatCompletions(w http.ResponseWriter, r *http.
 		if costMicrousd == 0 {
 			costMicrousd = -1
 		}
-		if receiptProvider != expectedProvider || !usageOk || costMicrousd < 0 {
+		providerMatches := receiptProvider != "" && (grantSnapshot.Lane != "judge" ||
+			receiptProvider == expectedProvider)
+		if !providerMatches || !usageOk || costMicrousd < 0 {
 			outcome.costMicrousd = costMicrousd
 			return httpErrorf(502, "provider identity mismatch")
 		}
