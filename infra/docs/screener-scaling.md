@@ -1,9 +1,9 @@
 # Federated screener capacity
 
-The subnet control plane can run with zero idle screeners. Platform owns demand,
-controller fencing, one-time node enrollment, rotating node credentials, and the
-audited capacity/event view. The private `ditto-screener-capacity-prod` process
-is the only normal provider mutator.
+The subnet control plane can run with zero idle GCE screeners. Platform owns
+demand, admits Targon screening attempts, creates the Kaniko / runtime / L1
+rentals, and attests verdicts. The separate `ditto-screener-capacity-prod` VM
+and screener fleet MIG are retired on this path.
 
 ## Provider order and safety gate
 
@@ -47,11 +47,15 @@ or `nogo` attestation still disables nested-Docker workers on Targon. It does
 not send screening demand to the GCE fleet when the three decomposed lanes are
 Targon-first. Screening on Targon is Kaniko compile, direct-image `/health`
 smoke of that exact archive, and read-only L1 review of the source tarball in a
-separate screener rental. The worker that signs the policy-9 verdict stays on
-GCE (controller/pet) and does not docker-load or rebuild the miner. Elevated L1
-findings quarantine rather than running GCE L2/L3 until that path is rewritten.
-A screener-to-smoke-rental prompt tool is a later issue; isolated fake-gateway
-oracle remains GCE-only until then.
+separate screener rental. Platform admits the screening attempt and attests the verdict. Elevated L1
+findings quarantine rather than running GCE L2/L3. A screener-to-smoke-rental
+prompt tool is a later issue; isolated fake-gateway oracle is skipped until
+then.
+
+The GCE screener fleet and the capacity-controller VM are not part of this
+path. Platform itself creates Targon rentals from a background loop in the API
+process. Scale the screener MIG to zero and stop `ditto-screener-capacity` and
+`ditto-image-builder`.
 
 Targon VMs expose a stronger kernel boundary, but they are not an acceptable
 autoscaling substitute yet: the live inventory is GPU-only, bootstrap is SSH
@@ -128,13 +132,14 @@ floor is zero; normal scale-in is controller-owned and lease-aware.
 
 ## Identity boundaries
 
-- Platform API uses `ditto-platform-api`; it reads the controller bearer only
-  to authenticate controller calls.
-- The capacity VM uses `ditto-screener-capacity`; it may read the Targon key and
-  controller bearer, resize the screener MIG, and mint short-lived bootstrap
-  tokens. It has no Platform storage or inference-provider access.
-- GCE workers use `ditto-screener-worker`; they can read only the exact worker
-  signing, bearer, source-review, and repository bootstrap secrets.
+- Platform API uses `ditto-platform-api`. It admits Targon screens, creates
+  rentals, and attests verdicts. Terraform grants that identity
+  `secretAccessor` on `TARGON_API_KEY`. Ansible reads the version at converge
+  under `no_log` and renders `DITTO_TARGON_API_KEY` into the platform `.env`
+  like every other platform secret. The value is never logged or placed in
+  rental env except the attempt-bound job tokens already required for Kaniko/L1.
+- GCE screener workers, `ditto-image-builder`, and the capacity-controller VM
+  are leftover from the nested-Docker path and are not required.
 - Federated Targon workers get a one-time Platform registration grant and a
   30-minute token for `ditto-screener-bootstrap`, which can read only the
   source-review secret. No service-account key crosses the provider boundary.
@@ -159,12 +164,14 @@ floor is zero; normal scale-in is controller-owned and lease-aware.
   runner fallback and publishing the reviewed Kaniko executor.
 
 `TARGON_API_KEY` is never a Terraform value. Terraform resolves only the Secret
-Manager resource metadata. Ansible reads the version with the capacity VM's
-attached identity under `no_log` and writes a mode-0600 file. Local operator
-probes use the monorepo's `services/screener-orchestrator/scripts/targon-smoke.sh`,
-which streams the secret directly from Secret Manager to the client process.
-The provider client uses Targon's organization-scoped v3 workload API and pins
-the non-secret production organization slug to `ditto`.
+Manager resource metadata and grants `ditto-platform-api` (and the leftover
+capacity VM, while it exists) `secretAccessor`. Ansible reads the version with
+the Platform VM's attached identity under `no_log` and renders it into `.env`.
+Local operator probes use the monorepo's
+`services/screener-orchestrator/scripts/targon-smoke.sh`, which streams the
+secret directly from Secret Manager to the client process. The provider client
+uses Targon's organization-scoped v3 workload API and pins the non-secret
+production organization slug to `ditto`.
 
 The three one-shot lanes have separate disposable smoke commands: a Kaniko
 `--roundtrip` build, a direct-image `runtime-probe`, and a
