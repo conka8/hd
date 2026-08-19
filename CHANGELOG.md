@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.95.2 (2026-08-19)
+
+### Bug Fixes
+
+- **dashboard**: Show the KOTH crown clock not tarball upload
+  ([#969](https://github.com/ditto-assistant/ditto-subnet/pull/969),
+  [`edf8d91`](https://github.com/ditto-assistant/ditto-subnet/commit/edf8d915147f9020416a291e532d4e6124556398))
+
+- **dashboard**: Stop comparing score column to dethrone bar
+  ([#967](https://github.com/ditto-assistant/ditto-subnet/pull/967),
+  [`12405eb`](https://github.com/ditto-assistant/ditto-subnet/commit/12405eb67db94ff7f04cf79a17f67fab9d8d6175))
+
+
 ## v0.95.1 (2026-08-19)
 
 ### Bug Fixes
