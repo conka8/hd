@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.91.0 (2026-08-19)
+
+### Features
+
+- **platform**: Show why the KOTH crown did not move
+  ([#940](https://github.com/ditto-assistant/ditto-subnet/pull/940),
+  [`44c395c`](https://github.com/ditto-assistant/ditto-subnet/commit/44c395c66b9001d5d401596954ade1596a14c2e8))
+
+
 ## v0.90.0 (2026-08-19)
 
 ### Bug Fixes
