@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.91.1 (2026-08-19)
+
+### Bug Fixes
+
+- **dittobench**: Mask every private bench version on the harness wire
+  ([#945](https://github.com/ditto-assistant/ditto-subnet/pull/945),
+  [`01b1c2a`](https://github.com/ditto-assistant/ditto-subnet/commit/01b1c2af06257ee3893e3459ac0851b787cf4728))
+
+
 ## v0.91.0 (2026-08-19)
 
 ### Features
