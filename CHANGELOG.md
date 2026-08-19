@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.95.1 (2026-08-19)
+
+### Bug Fixes
+
+- **platform**: Delete finished Targon one-shot rentals
+  ([#968](https://github.com/ditto-assistant/ditto-subnet/pull/968),
+  [`e8b388f`](https://github.com/ditto-assistant/ditto-subnet/commit/e8b388f501b5ef8ab683c0b3cd89eb0c5159225c))
+
+
 ## v0.95.0 (2026-08-19)
 
 ### Bug Fixes
