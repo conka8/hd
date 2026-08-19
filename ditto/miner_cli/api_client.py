@@ -49,6 +49,9 @@ from ditto.api_models import (
     UploadCheckRequest,
     UploadCheckResponse,
 )
+from ditto.api_models.miner_logs import (
+    MinerHarnessLogsResponse,
+)
 from ditto.miner_cli.errors import (
     AgentNotFoundError,
     ApiResponseError,
@@ -56,6 +59,7 @@ from ditto.miner_cli.errors import (
     AvatarRejectedError,
     HotkeyAgentNotFoundError,
     LoginRejectedError,
+    LoginRequiredError,
     NameClaimRejectedError,
     PaymentAmountMismatchError,
     PaymentRecoveryExpiredError,
@@ -437,6 +441,37 @@ class ApiClient:
         if response.status_code not in (200, 201):
             raise AvatarRejectedError(_format_error(response, prefix="avatar-clear"))
         return MinerAvatarResponse.model_validate(response.json())
+
+    def get_harness_logs(
+        self, *, agent_id: UUID, token: str
+    ) -> MinerHarnessLogsResponse:
+        """Fetch this signed-in miner's harness diagnostics for one agent.
+
+        Args:
+            agent_id: Agent the current miner session claims to own.
+            token: Bearer token from ``ditto login``.
+
+        Returns:
+            Parsed :class:`MinerHarnessLogsResponse`, tickets newest first.
+
+        Raises:
+            LoginRequiredError: On 401 (missing, invalid, or expired session).
+            AgentNotFoundError: On 404. Unknown agent and another miner's
+                agent are indistinguishable.
+            ApiResponseError: On any other non-200.
+        """
+        response = self._request(
+            "GET",
+            f"/api/v1/me/agents/{agent_id}/harness-logs",
+            headers={"authorization": f"Bearer {token}"},
+        )
+        if response.status_code == 401:
+            raise LoginRequiredError("miner session is invalid or expired")
+        if response.status_code == 404:
+            raise AgentNotFoundError(f"no agent {agent_id} for this signed-in hotkey")
+        if response.status_code != 200:
+            raise ApiResponseError(_format_error(response, prefix="harness-logs"))
+        return MinerHarnessLogsResponse.model_validate(response.json())
 
     # ---- /retrieval/agent/{id}/status -----------------------------------
 

@@ -17,7 +17,10 @@ from __future__ import annotations
 import bittensor
 
 from ditto.miner_cli.models import WalletHandle
-from ditto.miner_cli.signing import build_upload_payload, sign_upload_payload
+from ditto.miner_cli.signing import (
+    build_upload_payload,
+    sign_upload_payload,
+)
 
 
 def _make_test_keypair() -> bittensor.Keypair:
