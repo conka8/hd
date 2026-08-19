@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v0.93.0 (2026-08-19)
+
+### Chores
+
+- **agents**: Record LongMem confirmation as a permanent bench dimension
+  ([#950](https://github.com/ditto-assistant/ditto-subnet/pull/950),
+  [`08b63a4`](https://github.com/ditto-assistant/ditto-subnet/commit/08b63a4df6268875a6cbab5fc84866640b1d2943))
+
+- **ci**: Accept docs and perf PR titles
+  ([#951](https://github.com/ditto-assistant/ditto-subnet/pull/951),
+  [`ffa6e13`](https://github.com/ditto-assistant/ditto-subnet/commit/ffa6e137ad917db49d98b7b70d10cd5c430e23fd))
+
+- **contract**: Leave one generator for the wire-contract goldens
+  ([#949](https://github.com/ditto-assistant/ditto-subnet/pull/949),
+  [`9844d4d`](https://github.com/ditto-assistant/ditto-subnet/commit/9844d4dc0da3973413f4c8baf53d86ace0f71245))
+
+### Features
+
+- **screener**: Put L1 model and timeout on Backroom settings
+  ([#952](https://github.com/ditto-assistant/ditto-subnet/pull/952),
+  [`e9c7a9b`](https://github.com/ditto-assistant/ditto-subnet/commit/e9c7a9b355bec4460056b21d1d50025fe1ffaa77))
+
+- **screener**: Raise L1 source-review budget to 200 steps / 8MB
+  ([#948](https://github.com/ditto-assistant/ditto-subnet/pull/948),
+  [`93e6f01`](https://github.com/ditto-assistant/ditto-subnet/commit/93e6f011f39b3c425bed45458e32e079b54ea782))
+
+
 ## v0.92.2 (2026-08-19)
 
 ### Bug Fixes
