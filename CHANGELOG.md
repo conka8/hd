@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.96.1 (2026-08-19)
+
+### Bug Fixes
+
+- **validator**: Default managed stack auto-update on
+  ([#975](https://github.com/ditto-assistant/ditto-subnet/pull/975),
+  [`fa4692a`](https://github.com/ditto-assistant/ditto-subnet/commit/fa4692a73f1520dc86744911c1b4d3aa169f2129))
+
+
 ## v0.96.0 (2026-08-19)
 
 ### Bug Fixes
