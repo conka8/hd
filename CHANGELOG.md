@@ -2,6 +2,29 @@
 
 <!-- version list -->
 
+## v0.95.0 (2026-08-19)
+
+### Bug Fixes
+
+- **dittobench**: Run v9 LongMem instrument against v11 subjects
+  ([#959](https://github.com/ditto-assistant/ditto-subnet/pull/959),
+  [`2496e19`](https://github.com/ditto-assistant/ditto-subnet/commit/2496e19af304043b9db748d370b1a3ebc57c0045))
+
+- **platform**: Cooldown LongMem reissue after a failed ticket
+  ([#960](https://github.com/ditto-assistant/ditto-subnet/pull/960),
+  [`ca5375a`](https://github.com/ditto-assistant/ditto-subnet/commit/ca5375a19f1bc88b1d551c0f10bc68cc87719302))
+
+### Features
+
+- **platform**: Attest Targon screens without a GCE screener fleet
+  ([#956](https://github.com/ditto-assistant/ditto-subnet/pull/956),
+  [`bf265ef`](https://github.com/ditto-assistant/ditto-subnet/commit/bf265ef09b894ebdf2c988e4ae436f153d3dd0b2))
+
+- **screener**: Screen Targon health and L1 without nested Docker
+  ([#955](https://github.com/ditto-assistant/ditto-subnet/pull/955),
+  [`1befa6d`](https://github.com/ditto-assistant/ditto-subnet/commit/1befa6db20e3c9cba62d12a306e1ac8d7337143f))
+
+
 ## v0.94.0 (2026-08-19)
 
 ### Chores
