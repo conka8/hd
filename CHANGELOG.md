@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.95.3 (2026-08-19)
+
+### Bug Fixes
+
+- **scoring**: Do not charge miners for impossible allowance declines
+  ([#972](https://github.com/ditto-assistant/ditto-subnet/pull/972),
+  [`fe871fd`](https://github.com/ditto-assistant/ditto-subnet/commit/fe871fdff38d24d3a3db2bac1a86330ed3e4b966))
+
+
 ## v0.95.2 (2026-08-19)
 
 ### Bug Fixes
