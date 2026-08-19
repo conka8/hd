@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.92.0 (2026-08-19)
+
+### Features
+
+- Make harness stderr obtainable by operators and miners
+  ([#778](https://github.com/ditto-assistant/ditto-subnet/pull/778),
+  [`6474b6a`](https://github.com/ditto-assistant/ditto-subnet/commit/6474b6a2c05be7ad27221a3d4d4b9b1bab35f9e9))
+
+
 ## v0.91.1 (2026-08-19)
 
 ### Bug Fixes
