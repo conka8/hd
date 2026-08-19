@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v0.94.0 (2026-08-19)
+
+### Chores
+
+- **ci**: Verify generated confirmation release assets
+  ([#953](https://github.com/ditto-assistant/ditto-subnet/pull/953),
+  [`5cfce4a`](https://github.com/ditto-assistant/ditto-subnet/commit/5cfce4aa560df13b8e861d81d587347da6f1538d))
+
+### Features
+
+- **screener**: Name L2 failures for Backroom diagnosis
+  ([#958](https://github.com/ditto-assistant/ditto-subnet/pull/958),
+  [`1aac69a`](https://github.com/ditto-assistant/ditto-subnet/commit/1aac69a397713ed7bb3ad7423c22dbd448557767))
+
+
 ## v0.93.0 (2026-08-19)
 
 ### Chores
