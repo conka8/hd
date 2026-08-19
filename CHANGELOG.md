@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.92.2 (2026-08-19)
+
+### Bug Fixes
+
+- **confirmation**: Run the LongMem confirmation lane at every supported epoch
+  ([#946](https://github.com/ditto-assistant/ditto-subnet/pull/946),
+  [`a395f55`](https://github.com/ditto-assistant/ditto-subnet/commit/a395f55b0e7d63828f3f8d98898c71b42251709d))
+
+
 ## v0.92.1 (2026-08-19)
 
 ### Bug Fixes
