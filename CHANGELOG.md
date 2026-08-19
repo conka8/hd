@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.92.1 (2026-08-19)
+
+### Bug Fixes
+
+- **backroom**: Extend staff session lifetime to 7 days
+  ([#947](https://github.com/ditto-assistant/ditto-subnet/pull/947),
+  [`d605e19`](https://github.com/ditto-assistant/ditto-subnet/commit/d605e1965775094532d64878db8fe7d519dcfa46))
+
+
 ## v0.92.0 (2026-08-19)
 
 ### Features
