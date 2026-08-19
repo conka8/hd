@@ -2,6 +2,27 @@
 
 <!-- version list -->
 
+## v0.96.0 (2026-08-19)
+
+### Bug Fixes
+
+- **platform**: Align LongMem confirmation reader with scoring LLM relay
+  ([#963](https://github.com/ditto-assistant/ditto-subnet/pull/963),
+  [`f2e8991`](https://github.com/ditto-assistant/ditto-subnet/commit/f2e899107df7a39d71e3046806a7447a8c87da6a))
+
+### Chores
+
+- **ci**: Accept every conventional type the release tool parses
+  ([#962](https://github.com/ditto-assistant/ditto-subnet/pull/962),
+  [`b4b0f8d`](https://github.com/ditto-assistant/ditto-subnet/commit/b4b0f8d85117a1cc04e2f212b69dc9e65bad8701))
+
+### Features
+
+- **screener**: Remove nested Docker Targon worker lane
+  ([#964](https://github.com/ditto-assistant/ditto-subnet/pull/964),
+  [`4044afd`](https://github.com/ditto-assistant/ditto-subnet/commit/4044afdd567652ef77f3ba98b2ce4c5516440839))
+
+
 ## v0.95.3 (2026-08-19)
 
 ### Bug Fixes
