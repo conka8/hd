@@ -2,6 +2,29 @@
 
 <!-- version list -->
 
+## v0.90.0 (2026-08-19)
+
+### Bug Fixes
+
+- **validator**: Honor supports_confirmation on LongMem leases
+  ([#941](https://github.com/ditto-assistant/ditto-subnet/pull/941),
+  [`804d159`](https://github.com/ditto-assistant/ditto-subnet/commit/804d1597a0ea45c41c829e4d048fb971bba3be2c))
+
+### Features
+
+- **dashboard**: Make miner avatars read as identity, not favicons
+  ([#943](https://github.com/ditto-assistant/ditto-subnet/pull/943),
+  [`79b0aee`](https://github.com/ditto-assistant/ditto-subnet/commit/79b0aeed836943f01ddfd31e5b74e003010322f9))
+
+- **dashboard**: Make the miner panel scannable instead of a wall
+  ([#944](https://github.com/ditto-assistant/ditto-subnet/pull/944),
+  [`9d5ab72`](https://github.com/ditto-assistant/ditto-subnet/commit/9d5ab729288871c87dcab7b26cecfba932cf6d62))
+
+- **platform**: Ship the bench v12 contract as an operator rollout target
+  ([#942](https://github.com/ditto-assistant/ditto-subnet/pull/942),
+  [`6166a41`](https://github.com/ditto-assistant/ditto-subnet/commit/6166a412082fce8fa67a61737f0a5d10f65346f8))
+
+
 ## v0.89.0 (2026-08-18)
 
 ### Bug Fixes
