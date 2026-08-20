@@ -152,19 +152,11 @@ class TargonRentalLoop:
         return handled
 
     async def _repair_kaniko_image_ids(self) -> bool:
-        if self._storage is None:
-            return False
-        from ditto.api_server.storage.client import S3StorageClient
         from ditto.api_server.targon_screening import (
             repair_kaniko_screened_image_identities,
         )
 
-        storage = self._storage
-        if not isinstance(storage, S3StorageClient):
-            return False
-        repaired = await repair_kaniko_screened_image_identities(
-            self._session_maker, storage
-        )
+        repaired = await repair_kaniko_screened_image_identities(self._session_maker)
         return repaired > 0
 
     async def _finalize_ready_attempts(self) -> bool:
