@@ -28,12 +28,17 @@ export function validatorFailureLabel(
   code?: string | null,
 ): string {
   if (code === "inference_allowance_exhausted") return "Inference allowance exhausted";
+  if (code === "inference_request_rejected") return "Inference request rejected";
   const labels: Record<string, string> = {
     sandbox_oom: "Sandbox out of memory",
     infrastructure: "Validator infrastructure failure",
     scoring_error: "Scoring run failed",
   };
   return (reason != null && labels[reason]) || "";
+}
+
+function isAgentTerminalInferenceCode(code?: string | null): boolean {
+  return code === "inference_allowance_exhausted" || code === "inference_request_rejected";
 }
 
 /** Screening attempt chip; a resolved quarantine reads by its resolution
@@ -104,10 +109,9 @@ export function validationAttemptView(a: ValidationAttempt): ValidationAttemptVi
       Boolean(a.failed_at && a.issued_at && new Date(a.failed_at) < new Date(a.issued_at)));
   const currentFailure = !!failureLabel && !priorFailure;
   if (!a.actively_running && currentFailure) {
-    label =
-      a.failure_code === "inference_allowance_exhausted"
-        ? [failureLabel, "bad"]
-        : [failureLabel + " · deferred", "warn"];
+    label = isAgentTerminalInferenceCode(a.failure_code)
+      ? [failureLabel, "bad"]
+      : [failureLabel + " · deferred", "warn"];
   }
   const continual = a.purpose === "continual_retest";
   const canonical = a.purpose === "canonical_quorum";
@@ -121,9 +125,11 @@ export function validationAttemptView(a: ValidationAttempt): ValidationAttemptVi
   const retryTip =
     a.failure_code === "inference_allowance_exhausted" && currentFailure
       ? "The agent exhausted its request or token allowance, or sent one request larger than the run token allowance. It is not validator infrastructure and does not receive an automatic infrastructure retry."
-      : canonical && (a.actively_running ? "running" : a.status) === "expired"
-        ? VALIDATOR_RETRY_EXPLANATION
-        : null;
+      : a.failure_code === "inference_request_rejected" && currentFailure
+        ? "The platform refused the harness's inference request before reserving capacity (schema, size, or an unsupported field). It is not a spent grant and does not receive an automatic infrastructure retry."
+        : canonical && (a.actively_running ? "running" : a.status) === "expired"
+          ? VALIDATOR_RETRY_EXPLANATION
+          : null;
   let meta = "";
   if (a.actively_running) meta += " is running the benchmark";
   else if (a.status === "issued") meta += " has this assignment";
@@ -133,6 +139,8 @@ export function validationAttemptView(a: ValidationAttempt): ValidationAttemptVi
   if (attemptCount > 1) meta += " on attempt " + attemptCount;
   if (currentFailure && a.failure_code === "inference_allowance_exhausted") {
     meta += " · exceeded the run inference allowance";
+  } else if (currentFailure && a.failure_code === "inference_request_rejected") {
+    meta += " · request refused before reservation";
   } else if (currentFailure) meta += " · reported " + failureLabel.toLowerCase();
   else if (priorFailure) meta += " · an earlier attempt reported " + failureLabel.toLowerCase();
   if (a.deadline && (a.actively_running || a.status === "issued")) {
