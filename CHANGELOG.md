@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.98.1 (2026-08-20)
+
+### Bug Fixes
+
+- **platform**: Accept gcp on public operations snapshot
+  ([#1000](https://github.com/ditto-assistant/ditto-subnet/pull/1000),
+  [`9164b7b`](https://github.com/ditto-assistant/ditto-subnet/commit/9164b7b4ddba17abae2c21fd7c49105ec2e2b871))
+
+
 ## v0.98.0 (2026-08-20)
 
 ### Features
