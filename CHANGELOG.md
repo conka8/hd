@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.96.3 (2026-08-20)
+
+### Bug Fixes
+
+- **dittobench-api**: Fail-closed missing budget evidence
+  ([#989](https://github.com/ditto-assistant/ditto-subnet/pull/989),
+  [`f39af32`](https://github.com/ditto-assistant/ditto-subnet/commit/f39af32d193639ab431ca16cb01370371abc30b2))
+
+
 ## v0.96.2 (2026-08-20)
 
 ### Bug Fixes
