@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.96.6 (2026-08-20)
+
+### Bug Fixes
+
+- **platform**: Drop OpenRouter routing extras instead of 400ing them
+  ([#992](https://github.com/ditto-assistant/ditto-subnet/pull/992),
+  [`9d9a288`](https://github.com/ditto-assistant/ditto-subnet/commit/9d9a288e3bbd301c91f29d860a3f205098dcbe75))
+
+
 ## v0.96.5 (2026-08-20)
 
 ### Bug Fixes
