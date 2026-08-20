@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.98.8 (2026-08-20)
+
+### Bug Fixes
+
+- **platform**: Pin Targon screened images to config digest
+  ([#1010](https://github.com/ditto-assistant/ditto-subnet/pull/1010),
+  [`b223c7f`](https://github.com/ditto-assistant/ditto-subnet/commit/b223c7f54fd2c254f675d3a3ee387912903e415a))
+
+
 ## v0.98.7 (2026-08-20)
 
 ### Bug Fixes
