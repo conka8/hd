@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.98.4 (2026-08-20)
+
+### Bug Fixes
+
+- **inference**: Heal conflicting reasoning aliases before OpenRouter
+  ([#1001](https://github.com/ditto-assistant/ditto-subnet/pull/1001),
+  [`2d497b0`](https://github.com/ditto-assistant/ditto-subnet/commit/2d497b015c9b31adbeb4806658edbaf63ef9aa4e))
+
+
 ## v0.98.3 (2026-08-20)
 
 ### Bug Fixes
