@@ -2,6 +2,29 @@
 
 <!-- version list -->
 
+## v0.98.9 (2026-08-20)
+
+### Bug Fixes
+
+- **dashboard**: Type confirmation progress across evidence versions
+  ([#979](https://github.com/ditto-assistant/ditto-subnet/pull/979),
+  [`86bcc5e`](https://github.com/ditto-assistant/ditto-subnet/commit/86bcc5e6ec6fec286e5315c002a7bc5bfb144ed3))
+
+- **scoring**: Ingest v12 gates without false-zeroing gaps
+  ([#976](https://github.com/ditto-assistant/ditto-subnet/pull/976),
+  [`b5cc8c7`](https://github.com/ditto-assistant/ditto-subnet/commit/b5cc8c760632380175db2fadcb00a57bf52c34fc))
+
+- **scoring**: Keep v12 answer-stuffing default on penalize
+  ([#977](https://github.com/ditto-assistant/ditto-subnet/pull/977),
+  [`44f6321`](https://github.com/ditto-assistant/ditto-subnet/commit/44f6321b47aa3a37cf16b5818aa2291ec895138e))
+
+### Chores
+
+- **tests**: Pin v12 on capability and confirmation regressions
+  ([#978](https://github.com/ditto-assistant/ditto-subnet/pull/978),
+  [`9f1d283`](https://github.com/ditto-assistant/ditto-subnet/commit/9f1d28366ee938ac99ea2337b9527aa0dbeec273))
+
+
 ## v0.98.8 (2026-08-20)
 
 ### Bug Fixes
