@@ -40,10 +40,10 @@ package scoregates
 //     it catches a harness that DID route through the model but fed it the
 //     pre-computed answer to launder.
 //
-// Posture: ENFORCE by default. A finished COMPUTED answer sitting in the
-// harness's own model-input for a compute-required case is a deliberate
-// injection, so the default is a hard gate-zero -- but it is flippable to review
-// via env (the same shadow-before-enforce ladder the other gates follow).
+// Posture: PENALIZE by default. A finished COMPUTED answer in the harness
+// model-input is a lead, not a proof of Class-D coercion; enforce false-zeroed
+// an honest champion. The default is a graduated, capped, never-zero penalty,
+// flippable to review or enforce via env.
 //
 // Gating bar: STRICT + PROVABLE per case, with a LOW count threshold. Each flagged
 // case is now provable on its own -- the scorer flags a computed case ONLY when
@@ -53,11 +53,12 @@ package scoregates
 // value that is nowhere in memory yet fed into the model input cannot be a numeric
 // coincidence with an operand: an operand-equals-answer value is present in memory
 // as that operand and is therefore excluded before it can be flagged. Because a
-// single flagged case is already proof of injection, the run zeroes when the COUNT
-// of provable stuffed cases crosses a low threshold (default 1) rather than a
-// majority share -- the old majority rule let a minority stuffer (real exploit
-// lets_5.0 stuffs ~1 of 5 computed cases) slip through. The stuffed share is still
-// published for observability.
+// single flagged case is already a lead, the compiled default PENALIZE posture
+// reduces the composite by a capped stuffed share rather than zeroing; enforce
+// zeroes when the COUNT of provable stuffed cases crosses a low threshold
+// (default 1) rather than a majority share -- the old majority rule let a
+// minority stuffer (real exploit lets_5.0 stuffs ~1 of 5 computed cases) slip
+// through. The stuffed share is still published for observability.
 
 import "fmt"
 
@@ -65,8 +66,8 @@ type AnswerStuffingPosture string
 
 const (
 	// AnswerStuffingEnforce zeroes the composite when the provable stuffed COUNT
-	// reaches MinCases. Default: a computed answer in the harness's model-input is a
-	// deliberate injection, so the honest posture is a hard gate.
+	// reaches MinCases. Opt-in only: the compiled default is PENALIZE because a
+	// computed answer in the harness's model-input is a lead, not a proof.
 	AnswerStuffingEnforce AnswerStuffingPosture = "enforce"
 	// AnswerStuffingReview emits the signed evidence and routes a flagged run to
 	// human review WITHOUT zeroing the composite (FactorBPS stays full). Reserved
