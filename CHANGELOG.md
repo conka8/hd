@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v0.97.0 (2026-08-20)
+
+### Bug Fixes
+
+- **platform**: Cap concurrent Targon screening rentals at 10
+  ([#998](https://github.com/ditto-assistant/ditto-subnet/pull/998),
+  [`7455df5`](https://github.com/ditto-assistant/ditto-subnet/commit/7455df5cd69d8bd32638d20eec0bbb7ecfdcc691))
+
+- **platform**: Time out Targon rentals that never leave provisioning
+  ([#991](https://github.com/ditto-assistant/ditto-subnet/pull/991),
+  [`2771fcc`](https://github.com/ditto-assistant/ditto-subnet/commit/2771fcc4b2363e6d6df109d4520a7f7d3c94820f))
+
+### Features
+
+- **platform**: Fall back Targon screening lanes to Cloud Run
+  ([#994](https://github.com/ditto-assistant/ditto-subnet/pull/994),
+  [`2abbb5e`](https://github.com/ditto-assistant/ditto-subnet/commit/2abbb5e59d12ac8b6c8144e0046921635ffcf6b4))
+
+
 ## v0.96.6 (2026-08-20)
 
 ### Bug Fixes
