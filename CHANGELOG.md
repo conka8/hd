@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.98.6 (2026-08-20)
+
+### Bug Fixes
+
+- **platform**: Unstick screens after Cloud Run builder image misses
+  ([#1006](https://github.com/ditto-assistant/ditto-subnet/pull/1006),
+  [`6f202a2`](https://github.com/ditto-assistant/ditto-subnet/commit/6f202a21062b6aa8b9ed9cc67273e5439985cbc8))
+
+
 ## v0.98.5 (2026-08-20)
 
 ### Bug Fixes
