@@ -1,5 +1,5 @@
 // The sidebar shell (monolith 2536–2605): brand + bench badge, the
-// hash-routed nav with its inline SVG icons, the theme switcher, and the
+// path-routed nav with its inline SVG icons, the theme switcher, and the
 // side-foot controls (wandb telemetry link, platform source link, manual
 // refresh). SiteFooter is the open-source repository footer (2995–3007) that
 // renders on the benchmark page; it lives here because the shell owns the
@@ -10,6 +10,7 @@ import type { JSX } from "solid-js";
 
 import { WANDB_URL } from "../../lib/config";
 import type { PageName } from "../../lib/router";
+import { dashboardHref } from "../../lib/router";
 import { minerSession } from "../../stores/sessionStore";
 import { currentPage, navigateToPage } from "../../stores/routeStore";
 import { BenchBadge } from "./BenchBadge";
@@ -135,7 +136,7 @@ export interface SidebarProps {
 }
 
 // Plain left clicks route through the store; modified clicks keep native
-// anchor behavior (new tab etc.) on the static "#/{page}" href.
+// anchor behavior (new tab etc.) on the crawlable pathname href.
 function onNavClick(ev: MouseEvent, page: PageName): void {
   if (
     ev.defaultPrevented ||
@@ -179,7 +180,7 @@ export function Sidebar(props: SidebarProps): JSX.Element {
             <a
               class="nav-item"
               classList={{ active: currentPage() === item.page }}
-              href={"#/" + item.page}
+              href={dashboardHref(item.page)}
               data-page={item.page}
               aria-current={currentPage() === item.page ? "page" : undefined}
               onClick={(ev) => onNavClick(ev, item.page)}

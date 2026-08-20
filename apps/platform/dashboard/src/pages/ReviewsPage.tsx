@@ -1,4 +1,4 @@
-// Miner sign-in and private console. The public ATH queue moved to #/ath.
+// Miner sign-in and private console. The public ATH queue moved to /ath.
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 
@@ -7,7 +7,7 @@ import { MinerAvatar } from "../components/ui/MinerAvatar";
 import { API_BASE } from "../lib/config";
 import { authJSON, postJSON } from "../lib/api";
 import { copyText } from "../lib/copy";
-import { fullEntityHref } from "../lib/router";
+import { dashboardHref, fullEntityHref, spaHref, spaQuery } from "../lib/router";
 import {
   clearMinerSession,
   minerSession,
@@ -124,8 +124,8 @@ interface StoredPollGrant {
   expires_at: number;
 }
 
-function hashParams(): URLSearchParams {
-  return new URLSearchParams(location.hash.split("?")[1] || "");
+function loginParams(): URLSearchParams {
+  return spaQuery();
 }
 
 function persistPollGrant(userCode: string, pollToken: string): void {
@@ -160,11 +160,11 @@ function readPollGrant(): StoredPollGrant | null {
 function writeLoginHash(userCode: string, completeToken?: string): void {
   const params = new URLSearchParams({ code: userCode });
   if (completeToken) params.set("complete", completeToken);
-  history.replaceState(history.state ?? {}, "", "#/reviews?" + params.toString());
+  history.replaceState(history.state ?? {}, "", spaHref("reviews", params));
 }
 
 export function ReviewsPage(): JSX.Element {
-  const params = () => hashParams();
+  const params = () => loginParams();
   const presetCode = () => params().get("code") || params().get("login") || "";
   const completeToken = () => params().get("complete") || "";
 
@@ -410,8 +410,8 @@ function SignInPanel(props: { presetCode: string; completeToken: string }): JSX.
         <p class="account-error">{error()}</p>
       </Show>
       <p class="muted">
-        Public ATH holds now live at <a href="#/ath">#/ath</a>. Your submissions stay on{" "}
-        <a href="#/submissions">#/submissions</a>.
+        Public ATH holds now live at <a href={dashboardHref("ath")}>/ath</a>. Your submissions stay
+        on <a href={dashboardHref("submissions")}>/submissions</a>.
       </p>
     </div>
   );
