@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.98.7 (2026-08-20)
+
+### Bug Fixes
+
+- **dittobench**: Accept Kaniko attempt-scoped screened image tags
+  ([#1008](https://github.com/ditto-assistant/ditto-subnet/pull/1008),
+  [`b5e800f`](https://github.com/ditto-assistant/ditto-subnet/commit/b5e800fb5959a9174c2f9d55ecb1c3137fdb0a77))
+
+
 ## v0.98.6 (2026-08-20)
 
 ### Bug Fixes
