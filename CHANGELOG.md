@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.98.5 (2026-08-20)
+
+### Bug Fixes
+
+- **inference**: Forward assistant reasoning traces to OpenRouter
+  ([#1005](https://github.com/ditto-assistant/ditto-subnet/pull/1005),
+  [`b110ea9`](https://github.com/ditto-assistant/ditto-subnet/commit/b110ea972eaca5df3afef43d11c422a55ce3face))
+
+
 ## v0.98.4 (2026-08-20)
 
 ### Bug Fixes
