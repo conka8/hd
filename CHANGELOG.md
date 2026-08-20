@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.98.0 (2026-08-20)
+
+### Features
+
+- **backroom**: Expose validator fleet identity on MCP
+  ([#997](https://github.com/ditto-assistant/ditto-subnet/pull/997),
+  [`2ff6c44`](https://github.com/ditto-assistant/ditto-subnet/commit/2ff6c443eeeaa7e1ccb5205efea095c0252c3991))
+
+
 ## v0.97.0 (2026-08-20)
 
 ### Bug Fixes
