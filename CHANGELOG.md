@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.98.10 (2026-08-20)
+
+### Bug Fixes
+
+- **platform**: Pin Kaniko images from registry config digest
+  ([#1011](https://github.com/ditto-assistant/ditto-subnet/pull/1011),
+  [`d8f529a`](https://github.com/ditto-assistant/ditto-subnet/commit/d8f529a293110a813fac193318da37f92df3fd70))
+
+
 ## v0.98.9 (2026-08-20)
 
 ### Bug Fixes
