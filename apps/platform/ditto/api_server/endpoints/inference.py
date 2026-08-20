@@ -1196,10 +1196,12 @@ def _openrouter_headers(
 #    (``allow_fallbacks: true``) the request simply lands on one of the eight
 #    supporting providers, so forwarding ``response_format`` cannot manufacture
 #    a 400.
-#  * ``reasoning_effort`` is the one field that HARD-FAILS: OpenRouter answers
-#    400 `"reasoning_effort" and "reasoning.effort" are both provided with
-#    conflicting values` whenever it disagrees with the pinned block. Forwarding
-#    it would break every request that sets it to anything but ``medium``.
+#  * ``reasoning_effort`` is the one proven-bad sibling: OpenRouter answers 400
+#    `"reasoning_effort" and "reasoning.effort" are both provided with
+#    conflicting values` when both aliases are present and disagree. The lock
+#    heals that shape up front by collapsing to the nested block. Extra message
+#    / tool_call keys (OpenRouter ``index``, echoed assistant ``reasoning``)
+#    are accepted at the door and forwarded; live OpenRouter accepts them.
 
 # The anti-cheat boundary. Accepted, then replaced or removed so the ticket's
 # value governs; see ``_locked_upstream_payload``.
@@ -1499,8 +1501,13 @@ def _validate_request_schema(payload: dict[str, Any]) -> None:
             # below, and remove it from the locked provider payload.
             "tool": {"role", "content", "tool_call_id", "name"},
         }.get(role)
-        if allowed is None or set(message) - allowed:
+        if allowed is None:
             raise HTTPException(status_code=400, detail="invalid message")
+        # Extra keys are accepted, not refused. Miners echo provider-additive
+        # fields (assistant reasoning, tool_call `index`) and killing the run
+        # over them is the Cooking-class bug. Live OpenRouter accepts them;
+        # `_locked_upstream_payload` only strips the proven-bad sibling alias
+        # and the legacy tool-role `name`.
         content = message.get("content")
         text_parts = (
             isinstance(content, list)
@@ -1525,14 +1532,13 @@ def _validate_request_schema(payload: dict[str, Any]) -> None:
         if not isinstance(tool_calls, list):
             raise HTTPException(status_code=400, detail="invalid tool calls")
         for call in tool_calls:
-            if not isinstance(call, dict) or set(call) - {"id", "type", "function"}:
+            if not isinstance(call, dict):
                 raise HTTPException(status_code=400, detail="invalid tool call")
             function = call.get("function")
             if (
                 call.get("type") != "function"
                 or not isinstance(call.get("id"), str)
                 or not isinstance(function, dict)
-                or set(function) - {"name", "arguments"}
                 or not isinstance(function.get("name"), str)
                 or not isinstance(function.get("arguments"), str)
             ):
@@ -1643,13 +1649,9 @@ def _benchmark_reasoning_for_request(
             raise HTTPException(status_code=400, detail="invalid reasoning_effort")
         flat_effort = candidate
 
-    if (
-        nested_effort is not None
-        and flat_effort is not None
-        and nested_effort != flat_effort
-    ):
-        raise HTTPException(status_code=400, detail="conflicting reasoning effort")
-
+    # Nested wins on conflict. OpenRouter 400s when both aliases disagree; the
+    # nested block is the canonical provider field, and dropping the flat
+    # sibling is the same heal as matching aliases. Do not wait for that 400.
     effort = nested_effort or flat_effort or BENCH_V9_DEFAULT_REASONING_EFFORT
     return {"effort": effort, "exclude": True}
 
@@ -1725,12 +1727,7 @@ def _locked_upstream_payload(
     # changing model-visible content by removing only that annotation.
     messages = upstream.get("messages")
     if isinstance(messages, list):
-        upstream["messages"] = [
-            {key: value for key, value in message.items() if key != "name"}
-            if isinstance(message, dict) and message.get("role") == "tool"
-            else message
-            for message in messages
-        ]
+        upstream["messages"] = _sanitize_upstream_messages(messages)
     upstream["max_tokens"] = max_tokens
     upstream["n"] = 1
     upstream["stream"] = False
@@ -1745,6 +1742,24 @@ def _locked_upstream_payload(
     else:
         upstream["reasoning"] = reasoning
     return upstream
+
+
+def _sanitize_upstream_messages(messages: list[Any]) -> list[Any]:
+    """Drop only the legacy tool-role ``name`` some upstreams reject.
+
+    Extra keys (assistant ``reasoning``, OpenRouter ``tool_calls[].index``)
+    stay. Live OpenRouter accepts them; the proven-bad shape to heal is the
+    sibling ``reasoning_effort`` alias, which is stripped in the lock.
+    """
+    sanitized: list[Any] = []
+    for message in messages:
+        if isinstance(message, dict) and message.get("role") == "tool":
+            sanitized.append(
+                {key: value for key, value in message.items() if key != "name"}
+            )
+        else:
+            sanitized.append(message)
+    return sanitized
 
 
 async def _resolve_admission_config(
@@ -2531,12 +2546,7 @@ def _locked_confirmation_chat_payload(
         upstream.pop(field, None)
     messages = upstream.get("messages")
     if isinstance(messages, list):
-        upstream["messages"] = [
-            {key: value for key, value in message.items() if key != "name"}
-            if isinstance(message, dict) and message.get("role") == "tool"
-            else message
-            for message in messages
-        ]
+        upstream["messages"] = _sanitize_upstream_messages(messages)
     upstream["model"] = grant.model
     if grant.lane == "judge":
         upstream["max_completion_tokens"] = max_tokens

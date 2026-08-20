@@ -65,13 +65,13 @@ func TestValidateRequestSchema(t *testing.T) {
 		{"messages missing", `{}`, "messages must be non-empty"},
 		{"messages empty", `{"messages":[]}`, "messages must be non-empty"},
 		{"message bad role", `{"messages":[{"role":"robot","content":"x"}]}`, "invalid message"},
-		{"message extra key", `{"messages":[{"role":"user","content":"x","name":"u"}]}`, "invalid message"},
+		{"message extra key", `{"messages":[{"role":"user","content":"x","name":"u"}]}`, ""},
 		{"tool message with name ok", `{"messages":[{"role":"tool","content":"x","tool_call_id":"1","name":"f"}]}`, ""},
 		{"tool message empty name", `{"messages":[{"role":"tool","content":"x","tool_call_id":"1","name":""}]}`, "invalid tool name"},
 		{"content parts ok", `{"messages":[{"role":"user","content":[{"type":"text","text":"x"}]}]}`, ""},
 		{"content image part", `{"messages":[{"role":"user","content":[{"type":"image_url","image_url":"u"}]}]}`, "text content only"},
 		{"assistant tool_calls ok", `{"messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"1","type":"function","function":{"name":"f","arguments":"{}"}}]}]}`, ""},
-		{"tool call extra key", `{"messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"1","type":"function","index":0,"function":{"name":"f","arguments":"{}"}}]}]}`, "invalid tool call"},
+		{"tool call extra key", `{"messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"1","type":"function","index":0,"function":{"name":"f","arguments":"{}"}}]}]}`, ""},
 		{"tool calls non-list", `{"messages":[{"role":"assistant","content":null,"tool_calls":{}}]}`, "invalid tool calls"},
 		{"tools ok", `{"tools":[{"type":"function","function":{"name":"f","description":"d","parameters":{}}}],` + minimalMessages + `}`, ""},
 		{"tools bad type", `{"tools":[{"type":"web","function":{"name":"f"}}],` + minimalMessages + `}`, "invalid function tool"},
@@ -150,12 +150,11 @@ func TestBenchmarkReasoningForRequest(t *testing.T) {
 		t.Fatalf("v9 exclude-true shape: got %v %v", block, err)
 	}
 	for body, want := range map[string]string{
-		`{"reasoning":{"effort":"low","exclude":false}}`:           "invalid reasoning",
-		`{"reasoning":{"effort":"low","extra":1}}`:                 "invalid reasoning",
-		`{"reasoning":"low"}`:                                      "invalid reasoning",
-		`{"reasoning":{"effort":"max"}}`:                           "invalid reasoning effort",
-		`{"reasoning_effort":"max"}`:                               "invalid reasoning_effort",
-		`{"reasoning":{"effort":"low"},"reasoning_effort":"high"}`: "conflicting reasoning effort",
+		`{"reasoning":{"effort":"low","exclude":false}}`: "invalid reasoning",
+		`{"reasoning":{"effort":"low","extra":1}}`:       "invalid reasoning",
+		`{"reasoning":"low"}`:                            "invalid reasoning",
+		`{"reasoning":{"effort":"max"}}`:                 "invalid reasoning effort",
+		`{"reasoning_effort":"max"}`:                     "invalid reasoning_effort",
 	} {
 		if _, err := reason(body, 9); err == nil || err.message != want {
 			t.Fatalf("%s: want %q, got %v", body, want, err)
@@ -164,6 +163,10 @@ func TestBenchmarkReasoningForRequest(t *testing.T) {
 	// Matching aliases are fine.
 	if block, err := reason(`{"reasoning":{"effort":"low"},"reasoning_effort":"low"}`, 9); err != nil || block["effort"] != "low" {
 		t.Fatalf("matching aliases: got %v %v", block, err)
+	}
+	// Conflicting aliases heal to the nested block instead of 400ing.
+	if block, err := reason(`{"reasoning":{"effort":"low"},"reasoning_effort":"high"}`, 9); err != nil || block["effort"] != "low" {
+		t.Fatalf("conflicting aliases prefer nested: got %v %v", block, err)
 	}
 }
 
@@ -201,6 +204,26 @@ func TestLockedUpstreamPayload(t *testing.T) {
 	toolMsg := messages[1].(map[string]any)
 	if _, present := toolMsg["name"]; present {
 		t.Fatalf("tool-role name must be stripped upstream")
+	}
+	indexed := parsePayload(t, `{
+		"model":"openai/gpt-oss-20b","reasoning_effort":"medium",
+		"messages":[{"role":"assistant","content":"","tool_calls":[{"id":"1","type":"function","index":0,"function":{"name":"f","arguments":"{}"}}]}]
+	}`)
+	indexedUp, herr := lockedUpstreamPayload(indexed, v7Model, 40, 9)
+	if herr != nil {
+		t.Fatalf("indexed tool_calls: %v", herr)
+	}
+	if _, present := indexedUp["reasoning_effort"]; present {
+		t.Fatal("reasoning_effort must be stripped")
+	}
+	calls := indexedUp["messages"].([]any)[0].(map[string]any)["tool_calls"].([]any)
+	call := calls[0].(map[string]any)
+	index, present := call["index"]
+	if !present {
+		t.Fatal("tool_call index must be forwarded; OpenRouter accepts it")
+	}
+	if n, ok := index.(json.Number); !ok || n.String() != "0" {
+		t.Fatalf("tool_call index = %v", index)
 	}
 	if _, present := messages[0].(map[string]any)["content"]; !present {
 		t.Fatalf("user message must survive")

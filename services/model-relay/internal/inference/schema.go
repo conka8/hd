@@ -311,15 +311,14 @@ func validateMessages(v any) *httpError {
 		if !ok {
 			return httpErrorf(400, "invalid message")
 		}
-		allowed, ok := messageAllowedKeys[role]
-		if !ok {
+		if _, ok := messageAllowedKeys[role]; !ok {
 			return httpErrorf(400, "invalid message")
 		}
-		for key := range message {
-			if _, ok := allowed[key]; !ok {
-				return httpErrorf(400, "invalid message")
-			}
-		}
+		// Extra keys are accepted, not refused. Miners echo provider-additive
+		// fields (assistant reasoning, tool_call index) and killing the run
+		// over them is the Cooking-class bug. Live OpenRouter accepts them;
+		// lockedUpstreamPayload only strips the proven-bad sibling alias and
+		// the legacy tool-role name.
 		content, hasContent := message["content"]
 		if hasContent && content != nil {
 			if _, isStr := content.(string); !isStr {
@@ -349,21 +348,11 @@ func validateMessages(v any) *httpError {
 			if !ok {
 				return httpErrorf(400, "invalid tool call")
 			}
-			for key := range call {
-				if key != "id" && key != "type" && key != "function" {
-					return httpErrorf(400, "invalid tool call")
-				}
-			}
 			fn, _ := call["function"].(map[string]any)
 			id, idOk := call["id"].(string)
 			_ = id
 			if call["type"] != "function" || !idOk || fn == nil {
 				return httpErrorf(400, "invalid tool call")
-			}
-			for key := range fn {
-				if key != "name" && key != "arguments" {
-					return httpErrorf(400, "invalid tool call")
-				}
 			}
 			if _, ok := fn["name"].(string); !ok {
 				return httpErrorf(400, "invalid tool call")
@@ -515,9 +504,8 @@ func benchmarkReasoningForRequest(payload map[string]any, model string, benchVer
 		}
 		flatEffort = effort
 	}
-	if nestedEffort != "" && flatEffort != "" && nestedEffort != flatEffort {
-		return nil, httpErrorf(400, "conflicting reasoning effort")
-	}
+	// Nested wins on conflict. OpenRouter 400s when both aliases disagree;
+	// dropping the flat sibling is the same heal as matching aliases.
 	effort := nestedEffort
 	if effort == "" {
 		effort = flatEffort
@@ -543,22 +531,7 @@ func lockedUpstreamPayload(payload map[string]any, model string, maxTokens int, 
 	}
 	upstream["model"] = model
 	if messages, ok := upstream["messages"].([]any); ok {
-		stripped := make([]any, len(messages))
-		for i, raw := range messages {
-			message, ok := raw.(map[string]any)
-			if ok && message["role"] == "tool" {
-				clean := make(map[string]any, len(message))
-				for k, v := range message {
-					if k != "name" {
-						clean[k] = v
-					}
-				}
-				stripped[i] = clean
-			} else {
-				stripped[i] = raw
-			}
-		}
-		upstream["messages"] = stripped
+		upstream["messages"] = sanitizeUpstreamMessages(messages)
 	}
 	upstream["max_tokens"] = maxTokens
 	upstream["n"] = 1
@@ -573,6 +546,28 @@ func lockedUpstreamPayload(payload map[string]any, model string, maxTokens int, 
 		upstream["reasoning"] = reasoning
 	}
 	return upstream, nil
+}
+
+func sanitizeUpstreamMessages(messages []any) []any {
+	// Drop only the legacy tool-role name some upstreams reject. Extra keys
+	// (assistant reasoning, OpenRouter tool_call index) stay: live OpenRouter
+	// accepts them. The proven-bad shape is the sibling reasoning_effort alias.
+	stripped := make([]any, len(messages))
+	for i, raw := range messages {
+		message, ok := raw.(map[string]any)
+		if !ok || message["role"] != "tool" {
+			stripped[i] = raw
+			continue
+		}
+		clean := make(map[string]any, len(message))
+		for k, v := range message {
+			if k != "name" {
+				clean[k] = v
+			}
+		}
+		stripped[i] = clean
+	}
+	return stripped
 }
 
 // estimatedTokens mirrors _estimated_tokens: ceil(len/4), floored at 1.
