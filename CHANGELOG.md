@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.98.2 (2026-08-20)
+
+### Bug Fixes
+
+- **platform**: Count inference tokens from receipts not estimates
+  ([#999](https://github.com/ditto-assistant/ditto-subnet/pull/999),
+  [`aa5b6e9`](https://github.com/ditto-assistant/ditto-subnet/commit/aa5b6e90abecc5df6464f1e055ee151e4e44abe5))
+
+
 ## v0.98.1 (2026-08-20)
 
 ### Bug Fixes
