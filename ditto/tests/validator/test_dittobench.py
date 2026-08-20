@@ -31,6 +31,7 @@ from ditto.validator import dittobench
 from ditto.validator.dittobench import (
     _AGENT_ATTRIBUTABLE_INFERENCE_CODES,
     _SANDBOX_INFRASTRUCTURE_CODES,
+    SUPPORTED_BENCH_VERSIONS,
     DittobenchClient,
     DittobenchProgressSnapshot,
     InferenceBrokerSession,
@@ -330,7 +331,7 @@ async def test_current_scorer_preserves_versions_and_run_capacity() -> None:
             json={
                 "software_version": "0.22.0",
                 "source_revision": _REVISION,
-                "supported_bench_versions": [8, 9, 10, 11],
+                "supported_bench_versions": list(SUPPORTED_BENCH_VERSIONS),
                 "full_run_capacity": 2,
             },
         )
@@ -345,10 +346,11 @@ async def test_current_scorer_preserves_versions_and_run_capacity() -> None:
         observed = await client.scorer_benchmark_capability(_stack())
 
     assert observed.status == "fresh_verified"
-    # The validator keeps v11 in the intersection: a current scorer advertising
-    # it must reach the signed heartbeat, or the Platform counts zero v11-capable
-    # validators (regression when SUPPORTED_BENCH_VERSIONS lagged the scorer).
-    assert observed.supported_bench_versions == (8, 9, 10, 11)
+    # The validator keeps the scorer's advertised set in the intersection: a
+    # current scorer advertising v12 must reach the signed heartbeat, or the
+    # Platform counts zero v12-capable validators (regression when
+    # SUPPORTED_BENCH_VERSIONS lagged the scorer).
+    assert observed.supported_bench_versions == SUPPORTED_BENCH_VERSIONS
     assert client.full_run_capacity == 2
 
 
@@ -863,7 +865,7 @@ async def test_recovered_scorer_clears_the_reported_fault() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("bench_version", [8, 9, 10, 11])
+@pytest.mark.parametrize("bench_version", SUPPORTED_BENCH_VERSIONS)
 async def test_current_versions_use_versioned_route_and_bind_request(
     bench_version: int,
 ) -> None:
@@ -2068,11 +2070,11 @@ def _done_v9_job(*, declare_transcript: bool = True) -> dict[str, object]:
 
 
 def _done_zero_inference_job(bench_version: int) -> dict[str, object]:
-    """The signed report a PROVEN zero-inference run now returns on v9/v10/v11.
+    """The signed report a PROVEN zero-inference run now returns on v9+.
 
     The model-use gate reads ``zero_inference`` with factor ``0``, the enforce
     multiplier collapses the effective composite to ``0``, and the root is
-    signed exactly like any other score.
+    signed exactly like any other score. v12 also binds model_dependence.
     """
     from ditto_screening_protocol.bench_v9 import V9ScoreGateEvidence
 
@@ -2082,6 +2084,18 @@ def _done_zero_inference_job(bench_version: int) -> dict[str, object]:
     evidence["transcript_sha256"] = declared
     evidence["bench_version"] = bench_version
     evidence["score_gates"]["bench_version"] = bench_version
+    if bench_version >= 12:
+        evidence["score_gates"]["model_dependence"] = {
+            "administered_cases": 10,
+            "eligible_cases": 10,
+            "dependent_cases": 10,
+            "independent_cases": 0,
+            "slice_attribution_complete": True,
+            "dependence_bps": 10000,
+            "threshold_bps": 1,
+            "result": "passed",
+            "factor_bps": 10000,
+        }
     model_use = evidence["score_gates"]["model_use"]
     model_use.update(
         successful_inference_cases=0,
@@ -2127,7 +2141,10 @@ def _done_zero_inference_job(bench_version: int) -> dict[str, object]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("bench_version", [9, 10, 11])
+@pytest.mark.parametrize(
+    "bench_version",
+    [version for version in SUPPORTED_BENCH_VERSIONS if version >= 9],
+)
 async def test_proven_zero_inference_polls_back_as_an_ordinary_score(
     bench_version: int,
 ) -> None:
