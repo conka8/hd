@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.98.3 (2026-08-20)
+
+### Bug Fixes
+
+- **platform**: Pin dataset after Targon smoke finalize
+  ([#1003](https://github.com/ditto-assistant/ditto-subnet/pull/1003),
+  [`ead48d1`](https://github.com/ditto-assistant/ditto-subnet/commit/ead48d16b703a7487fe2339c9f2722e0608ecb28))
+
+
 ## v0.98.2 (2026-08-20)
 
 ### Bug Fixes
