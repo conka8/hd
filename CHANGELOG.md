@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.96.2 (2026-08-20)
+
+### Bug Fixes
+
+- **platform**: Delete Kaniko rentals on complete
+  ([#988](https://github.com/ditto-assistant/ditto-subnet/pull/988),
+  [`4ca9eeb`](https://github.com/ditto-assistant/ditto-subnet/commit/4ca9eeb4d052ddfa9c456baa0342f62fe9b6444a))
+
+
 ## v0.96.1 (2026-08-19)
 
 ### Bug Fixes
