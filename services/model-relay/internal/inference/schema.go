@@ -33,6 +33,7 @@ var pinnedRequestFields = map[string]struct{}{
 
 var droppedRequestFields = map[string]struct{}{
 	"user": {}, "metadata": {}, "safety_identifier": {}, "store": {}, "stream_options": {},
+	"provider": {}, "route": {}, "preset": {},
 }
 
 var forwardedRequestFields = map[string]struct{}{
@@ -46,9 +47,6 @@ var forwardedRequestFields = map[string]struct{}{
 
 var refusedRequestFields = map[string]string{
 	"models":             "the model is pinned by the ticket, not chosen by the request",
-	"provider":           "provider routing is pinned by the platform",
-	"route":              "provider routing is pinned by the platform",
-	"preset":             "provider routing is pinned by the platform",
 	"transforms":         "prompt transforms would change benchmark semantics",
 	"plugins":            "server-side plugins are not available on this lane",
 	"web_search_options": "server-side web search is not available on this lane",
