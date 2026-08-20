@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.96.4 (2026-08-20)
+
+### Bug Fixes
+
+- **platform**: Keep Targon Kaniko leases alive on a leftover pet
+  ([#987](https://github.com/ditto-assistant/ditto-subnet/pull/987),
+  [`73f296f`](https://github.com/ditto-assistant/ditto-subnet/commit/73f296f3b380ab561d087d30bcb727360ecbb1f6))
+
+
 ## v0.96.3 (2026-08-20)
 
 ### Bug Fixes
