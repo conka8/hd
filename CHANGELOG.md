@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.96.5 (2026-08-20)
+
+### Bug Fixes
+
+- **platform**: Publish inference_request_rejected on the public pipeline
+  ([#990](https://github.com/ditto-assistant/ditto-subnet/pull/990),
+  [`5e41756`](https://github.com/ditto-assistant/ditto-subnet/commit/5e41756c53c2b0dcb5fcc97eef0be123dae42bd2))
+
+- **platform**: Unfurl page-specific OG for dashboard shares
+  ([#971](https://github.com/ditto-assistant/ditto-subnet/pull/971),
+  [`f02bc7e`](https://github.com/ditto-assistant/ditto-subnet/commit/f02bc7ebdef5b22a153d69a6d69c269656abd40b))
+
+
 ## v0.96.4 (2026-08-20)
 
 ### Bug Fixes
