@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.103.0 (2026-08-21)
+
+### Features
+
+- **platform**: Put the payout countdown in the rail as a live clock
+  ([#1068](https://github.com/ditto-assistant/ditto-subnet/pull/1068),
+  [`8924bdc`](https://github.com/ditto-assistant/ditto-subnet/commit/8924bdcb57991deada4295b09fac77caacea4e49))
+
+
 ## v0.102.0 (2026-08-21)
 
 ### Features
