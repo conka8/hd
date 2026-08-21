@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.101.0 (2026-08-21)
+
+### Features
+
+- Add /mine skill and default local practice to live bench 11
+  ([#1056](https://github.com/ditto-assistant/ditto-subnet/pull/1056),
+  [`78d5b1a`](https://github.com/ditto-assistant/ditto-subnet/commit/78d5b1af4b5b446a0afe1dbdf89dbb0955fd9b64))
+
+
 ## v0.100.5 (2026-08-21)
 
 ### Bug Fixes
