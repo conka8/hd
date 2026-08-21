@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.99.8 (2026-08-21)
+
+### Bug Fixes
+
+- **dittobench**: Accept kaniko docker-save config names
+  ([#1036](https://github.com/ditto-assistant/ditto-subnet/pull/1036),
+  [`36e8d11`](https://github.com/ditto-assistant/ditto-subnet/commit/36e8d11beb517880bad7fa841ce7aa314d7e8bea))
+
+
 ## v0.99.7 (2026-08-21)
 
 ### Bug Fixes
