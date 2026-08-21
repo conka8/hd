@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.99.1 (2026-08-21)
+
+### Bug Fixes
+
+- **platform**: Pin Kaniko screened ids from tar config
+  ([#1016](https://github.com/ditto-assistant/ditto-subnet/pull/1016),
+  [`665ef8c`](https://github.com/ditto-assistant/ditto-subnet/commit/665ef8c33ccf32b30a21759fdacd48c972d7aa44))
+
+
 ## v0.99.0 (2026-08-21)
 
 ### Features
