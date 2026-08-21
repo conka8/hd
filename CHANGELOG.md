@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.99.3 (2026-08-21)
+
+### Bug Fixes
+
+- **platform**: Reap stale Targon inflight and detect Cloud Run running
+  ([#1028](https://github.com/ditto-assistant/ditto-subnet/pull/1028),
+  [`011b730`](https://github.com/ditto-assistant/ditto-subnet/commit/011b730b023e928b9d3e3bb379027a17f332ab4f))
+
+
 ## v0.99.2 (2026-08-21)
 
 ### Bug Fixes
