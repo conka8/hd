@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.100.4 (2026-08-21)
+
+### Bug Fixes
+
+- **bench**: Accept 430-minute inference grant activations
+  ([#1058](https://github.com/ditto-assistant/ditto-subnet/pull/1058),
+  [`89d89a0`](https://github.com/ditto-assistant/ditto-subnet/commit/89d89a0cca9a5d63cbe209043ccb793de26d9b71))
+
+
 ## v0.100.3 (2026-08-21)
 
 ### Bug Fixes
