@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.99.2 (2026-08-21)
+
+### Bug Fixes
+
+- **platform**: Do not launch a stale Kaniko builder
+  ([#1027](https://github.com/ditto-assistant/ditto-subnet/pull/1027),
+  [`3893074`](https://github.com/ditto-assistant/ditto-subnet/commit/3893074955c36be32332ac130243c84f542fa9c6))
+
+
 ## v0.99.1 (2026-08-21)
 
 ### Bug Fixes
