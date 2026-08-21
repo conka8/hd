@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v0.100.0 (2026-08-21)
+
+### Bug Fixes
+
+- Raise serial scoring timeout to 400 minutes
+  ([#1048](https://github.com/ditto-assistant/ditto-subnet/pull/1048),
+  [`4a2bcdf`](https://github.com/ditto-assistant/ditto-subnet/commit/4a2bcdfd8b3be5d5bf2881774f5bc5b0129603b2))
+
+- **platform**: Require 15% residual growth for resubmission containment
+  ([#1047](https://github.com/ditto-assistant/ditto-subnet/pull/1047),
+  [`58bb118`](https://github.com/ditto-assistant/ditto-subnet/commit/58bb118f618f78a65841159423ade1ffb9c62b55))
+
+### Features
+
+- **bench**: Overlap /run without per-case inference URLs
+  ([#1040](https://github.com/ditto-assistant/ditto-subnet/pull/1040),
+  [`bea9a44`](https://github.com/ditto-assistant/ditto-subnet/commit/bea9a44e88e3363e9bfa62c03e7ba743b69a09fe))
+
+
 ## v0.99.9 (2026-08-21)
 
 ### Bug Fixes
