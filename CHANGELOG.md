@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.99.0 (2026-08-21)
+
+### Features
+
+- **dittobench**: Accept gzip docker-save screened images
+  ([#1012](https://github.com/ditto-assistant/ditto-subnet/pull/1012),
+  [`d99cf29`](https://github.com/ditto-assistant/ditto-subnet/commit/d99cf290199f9d59cc7e0ed89f332aeb9c45f60b))
+
+
 ## v0.98.10 (2026-08-20)
 
 ### Bug Fixes
