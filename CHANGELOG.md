@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v0.99.7 (2026-08-21)
+
+### Bug Fixes
+
+- **platform**: Deploy builder that parses kaniko tar config names
+  ([#1035](https://github.com/ditto-assistant/ditto-subnet/pull/1035),
+  [`70a9af0`](https://github.com/ditto-assistant/ditto-subnet/commit/70a9af05db62aa54d85746fee5024e17bee4a6f4))
+
+### Chores
+
+- Add read-only Targon rental logs debug skill
+  ([#1033](https://github.com/ditto-assistant/ditto-subnet/pull/1033),
+  [`3850a48`](https://github.com/ditto-assistant/ditto-subnet/commit/3850a48e415a93ec615222e3551e80e7563a0915))
+
+
 ## v0.99.6 (2026-08-21)
 
 ### Bug Fixes
