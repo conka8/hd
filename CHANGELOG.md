@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v0.99.5 (2026-08-21)
+
+### Bug Fixes
+
+- **platform**: Stop leftover GCE builder claiming miner Kaniko
+  ([#1031](https://github.com/ditto-assistant/ditto-subnet/pull/1031),
+  [`5c1a50e`](https://github.com/ditto-assistant/ditto-subnet/commit/5c1a50e42732611799d7ff5842b2026015227908))
+
+### Chores
+
+- **deps**: Bump solid-js from 1.9.14 to 1.9.15 in /apps/platform/dashboard
+  ([#1023](https://github.com/ditto-assistant/ditto-subnet/pull/1023),
+  [`063374c`](https://github.com/ditto-assistant/ditto-subnet/commit/063374c830a639893f220d58ff43dca46ecfddab))
+
+
 ## v0.99.4 (2026-08-21)
 
 ### Bug Fixes
