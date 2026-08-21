@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.100.5 (2026-08-21)
+
+### Bug Fixes
+
+- **platform**: Yield idle retests when a newer family agent needs quorum
+  ([#1062](https://github.com/ditto-assistant/ditto-subnet/pull/1062),
+  [`9405258`](https://github.com/ditto-assistant/ditto-subnet/commit/9405258a5952594bc56dea3a0cc3115ac8a49307))
+
+
 ## v0.100.4 (2026-08-21)
 
 ### Bug Fixes
