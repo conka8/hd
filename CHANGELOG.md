@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.100.1 (2026-08-21)
+
+### Bug Fixes
+
+- **platform**: Require padding growth for copy-gate containment
+  ([#1049](https://github.com/ditto-assistant/ditto-subnet/pull/1049),
+  [`5d36fa4`](https://github.com/ditto-assistant/ditto-subnet/commit/5d36fa4541000ca45236386530e20b46d3be6712))
+
+
 ## v0.100.0 (2026-08-21)
 
 ### Bug Fixes
