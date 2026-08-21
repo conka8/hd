@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.100.3 (2026-08-21)
+
+### Bug Fixes
+
+- **bench**: Session-scoped v10+ tool provenance under concurrent /run
+  ([#1054](https://github.com/ditto-assistant/ditto-subnet/pull/1054),
+  [`ebf8556`](https://github.com/ditto-assistant/ditto-subnet/commit/ebf855639555b1245f93d20b163d61a9a3dcc880))
+
+
 ## v0.100.2 (2026-08-21)
 
 ### Bug Fixes
