@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.99.4 (2026-08-21)
+
+### Bug Fixes
+
+- **platform**: Treat nested Cloud Run execution refs as running
+  ([#1029](https://github.com/ditto-assistant/ditto-subnet/pull/1029),
+  [`b005872`](https://github.com/ditto-assistant/ditto-subnet/commit/b005872aeba7f9346dcfa58fb0320a937f7009b3))
+
+
 ## v0.99.3 (2026-08-21)
 
 ### Bug Fixes
