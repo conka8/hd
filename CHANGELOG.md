@@ -2,6 +2,29 @@
 
 <!-- version list -->
 
+## v0.99.9 (2026-08-21)
+
+### Bug Fixes
+
+- Raise chat body cap and pin platform middle-out
+  ([#1045](https://github.com/ditto-assistant/ditto-subnet/pull/1045),
+  [`c78e1a0`](https://github.com/ditto-assistant/ditto-subnet/commit/c78e1a0f844413c4a7e426c25b883df1885be826))
+
+- Raise serial bench-11 scoring timeout to 150 minutes
+  ([#1042](https://github.com/ditto-assistant/ditto-subnet/pull/1042),
+  [`1e1c332`](https://github.com/ditto-assistant/ditto-subnet/commit/1e1c3323175b6c5039207a9b0e0961cd76d906ee))
+
+- **model-relay**: Wait for postgres in gen-schema under set -e
+  ([#1044](https://github.com/ditto-assistant/ditto-subnet/pull/1044),
+  [`ed77b30`](https://github.com/ditto-assistant/ditto-subnet/commit/ed77b3092eb9b72ddf4cf4ec6dbc5f836140e91c))
+
+### Chores
+
+- Merge gcloud DB and Targon debug skills
+  ([#1037](https://github.com/ditto-assistant/ditto-subnet/pull/1037),
+  [`e390295`](https://github.com/ditto-assistant/ditto-subnet/commit/e39029533b239eecb2a0ecf1d8a586b2d8762817))
+
+
 ## v0.99.8 (2026-08-21)
 
 ### Bug Fixes
