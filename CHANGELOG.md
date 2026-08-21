@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.99.6 (2026-08-21)
+
+### Bug Fixes
+
+- **screener**: Parse kaniko tar config digest names
+  ([#1032](https://github.com/ditto-assistant/ditto-subnet/pull/1032),
+  [`f872ef7`](https://github.com/ditto-assistant/ditto-subnet/commit/f872ef7079d4bc6e25ae04b89cacc13703fac579))
+
+
 ## v0.99.5 (2026-08-21)
 
 ### Bug Fixes
