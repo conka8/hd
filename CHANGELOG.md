@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.100.2 (2026-08-21)
+
+### Bug Fixes
+
+- **platform**: Pair renamed copy-review source diffs
+  ([#1052](https://github.com/ditto-assistant/ditto-subnet/pull/1052),
+  [`c5a7062`](https://github.com/ditto-assistant/ditto-subnet/commit/c5a70626d491e190b1bf157258ffe72c2767b8e6))
+
+
 ## v0.100.1 (2026-08-21)
 
 ### Bug Fixes
