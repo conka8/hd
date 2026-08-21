@@ -52,6 +52,32 @@ func postProvenanceTool(
 	return recorder
 }
 
+func TestV10ToolRouteForwardsWithoutCaseWindowWhenProvenanceUnbound(t *testing.T) {
+	broker := newInferenceBroker(1)
+	called := 0
+	route, stop, err := broker.registerToolWithProvenance(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			called++
+			w.WriteHeader(http.StatusNoContent)
+		}),
+		"192.0.2.20", false, true, "",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	call := protocol.ToolExecRequest{
+		CaseID: "case-a", UserID: "user-a", Name: "search_web",
+		Args: json.RawMessage(`{"query":"veltrix"}`),
+	}
+	if recorder := postProvenanceTool(t, broker, route, "case-a", call); recorder.Code != http.StatusNoContent {
+		t.Fatalf("unbound provenance status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if called != 1 {
+		t.Fatalf("forwarded calls=%d want=1", called)
+	}
+}
+
 func TestV10ToolRouteRequiresAndConsumesMatchingModelEmission(t *testing.T) {
 	broker := newInferenceBroker(1)
 	const sessionID = "v10-provenance"
@@ -298,6 +324,14 @@ func TestV10ToolProvenanceControlsScoredCreditAndLeavesV9Frozen(t *testing.T) {
 	)
 	if v9.ToolScore != base.ToolScore || v9.ToolProvenance != nil || len(v9.Notes) != 0 {
 		t.Fatalf("v9 score changed: got=%+v want=%+v", v9, base)
+	}
+
+	missing := applyV10ToolProvenance(
+		protocol.BenchVersionV10, scorer.ScopeScored, base, response, observed, runner.CaseExecution{},
+	)
+	if missing.ToolScore != 1 || missing.ToolProvenance == nil ||
+		!slices.Contains(missing.ToolProvenance.Findings, "tool_provenance_unavailable") {
+		t.Fatalf("missing provenance should keep observed score: %+v", missing)
 	}
 }
 

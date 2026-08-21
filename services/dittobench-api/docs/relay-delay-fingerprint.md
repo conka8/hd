@@ -85,10 +85,16 @@ and — after the bunny ruling — nothing here is applied retroactively:
 
 For v10 scored leases, Platform stamps the Backroom-controlled mode and range
 onto the job and the validator forwards them to the broker. An absent runtime
-object preserves serial cases and the existing environment fallback (off by
-default), so every order of a rolling upgrade is safe. The environment
-variables remain fallback controls for older Platform/validator pairs and
-local operation.
+object uses the scorer default of four overlapping /run calls and the
+environment fallback for delay fingerprinting (off by default). The
+environment variables remain fallback controls for older Platform/validator
+pairs and local operation.
+
+The broker books and injects the hold only inside an open case window
+(`caseGeneration != 0`). Ordinary scored runs no longer open case windows, so
+`shadow` injects nothing and records no evidence there; it still applies
+inside confirmation case windows (`confirmation_runtime_factory.go`), which
+keep their exclusive `beginCaseSnapshot`/`endCaseSnapshot` pairs.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -109,6 +115,7 @@ case honest median → ~275ms per case against a multi-second honest p50 and a
   response-conditioned evidence (ditto-platform#518, trace publication). The
   fingerprint prices that evasion at full honest latency, which removes its
   entire speed advantage.
-- Legacy (v2–v8) sessions are untouched. V9 retains serial windows; v10 may
-  use independent broker-minted case capabilities when the harness advertises
-  support.
+- Legacy (v2–v8) sessions are untouched. Per-case delay attribution required
+  exclusive windows and is no longer administered for ordinary scored runs;
+  `shadow` neither injects nor records there. Only confirmation case windows
+  still carry the hold and its evidence.

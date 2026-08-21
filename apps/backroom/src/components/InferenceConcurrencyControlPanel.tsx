@@ -360,8 +360,10 @@ export function InferenceConcurrencyControlPanel({
             V10 benchmark runtime
           </legend>
           <p className="mb-4 max-w-[76ch] text-[11px] leading-4 text-[var(--muted)]">
-            These values are stamped onto newly issued v10 leases. V9 and running leases are
-            unchanged.
+            Stamped onto newly issued v10+ leases. In-flight leases keep their stamp. v9 has
+            no stamp and uses the scorer default (4). A stored revision of 1 stays live until
+            you write a new whole-object policy. Values above 16 need every validator on a
+            release that accepts 1–64; older validators reject such leases outright.
           </p>
           <div className="grid gap-4 lg:grid-cols-2">
             <label className="text-xs font-medium text-[var(--muted-strong)]">
@@ -380,8 +382,8 @@ export function InferenceConcurrencyControlPanel({
                 className="mt-2 block min-h-11 w-44 rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 text-sm outline-none focus:border-[var(--cyan)] disabled:opacity-45"
               />
               <span className="mt-2 block text-[11px] font-normal leading-4 text-[var(--muted)]">
-                Applied only when a v10 harness advertises case-scoped inference. Older v10
-                harnesses remain serial so trusted attribution never degrades.
+                How many /run calls one ticket may overlap. Default 4. Miners keep one
+                process-wide inference URL.
               </span>
             </label>
 
@@ -397,8 +399,9 @@ export function InferenceConcurrencyControlPanel({
                 <option value="shadow">Shadow</option>
               </select>
               <span className="mt-2 block text-[11px] font-normal leading-4 text-[var(--muted)]">
-                Shadow injects a secret deterministic hold and records evidence; it does not
-                change scores.
+                Shadow injects a secret deterministic hold and records evidence only inside
+                confirmation case windows; ordinary scored runs no longer open case windows, so
+                it is a no-op there. It never changes scores.
               </span>
             </label>
 

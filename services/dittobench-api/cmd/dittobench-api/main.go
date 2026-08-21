@@ -75,8 +75,10 @@ var (
 	// concurrent seed waves into deterministic Ollama timeouts; capable hosts may
 	// raise this independently after qualification.
 	maxConcurrentMemoryPhases = envIntDefault("DITTOBENCH_MAX_CONCURRENT_MEMORY_PHASES", 1)
-	// How many v8 cases one run may execute concurrently.
-	v8CaseConcurrency = envIntDefault("DITTOBENCH_V8_CASE_CONCURRENCY", 4)
+	// How many cases one run may execute concurrently. Operator Backroom
+	// benchmark_runtime.case_concurrency overrides this per scored lease.
+	v8CaseConcurrency           = envIntDefault("DITTOBENCH_V8_CASE_CONCURRENCY", 4)
+	maxBenchmarkCaseConcurrency = 64
 	// How many embedding calls ONE v8 run may have in flight. Two per concurrent
 	// case, so a case doing a retrieve burst is not blocked by its siblings, and
 	// so a harness that parallelises its own /seed ingestion gets some benefit
@@ -146,6 +148,20 @@ func runBounded(ctx context.Context, n, concurrency int, fn func(i int)) {
 
 func activeCaseConcurrency() int {
 	return v8CaseConcurrency
+}
+
+func caseConcurrencyForRun(runtime *benchmarkRuntimeSettings) int {
+	n := activeCaseConcurrency()
+	if runtime != nil && runtime.CaseConcurrency > 0 {
+		n = runtime.CaseConcurrency
+	}
+	if n < 1 {
+		n = 1
+	}
+	if n > maxBenchmarkCaseConcurrency {
+		n = maxBenchmarkCaseConcurrency
+	}
+	return n
 }
 
 type server struct {
@@ -649,7 +665,8 @@ type submitRequest struct {
 	InferenceSlotID         string    `json:"inference_slot_id,omitempty"`
 	InferenceTicketDeadline time.Time `json:"inference_ticket_deadline,omitempty"`
 	// BenchmarkRuntime is an additive v10 execution policy stamped onto the
-	// Platform lease. Absence preserves the deployed serial/off behavior.
+	// Platform lease. Absence uses the scorer default (4 overlapping /run calls,
+	// delay fingerprint off).
 	BenchmarkRuntime *benchmarkRuntimeSettings `json:"benchmark_runtime,omitempty"`
 }
 
@@ -667,8 +684,8 @@ func (r *benchmarkRuntimeSettings) validate(benchVersion int) error {
 	if benchVersion < protocol.BenchVersionV10 {
 		return fmt.Errorf("benchmark_runtime requires bench_version 10 or newer")
 	}
-	if r.CaseConcurrency < 1 || r.CaseConcurrency > 16 {
-		return fmt.Errorf("benchmark_runtime.case_concurrency must be between 1 and 16")
+	if r.CaseConcurrency < 1 || r.CaseConcurrency > maxBenchmarkCaseConcurrency {
+		return fmt.Errorf("benchmark_runtime.case_concurrency must be between 1 and %d", maxBenchmarkCaseConcurrency)
 	}
 	if r.RelayDelayFingerprintMode != delayFingerprintOff &&
 		r.RelayDelayFingerprintMode != delayFingerprintShadow {
@@ -1738,8 +1755,18 @@ func (s *server) runSizeJob(ctx context.Context, runID string, req submitRequest
 	if handle != nil {
 		toolSourceIP = handle.SourceIP
 	}
+	// The broker's per-source chat and tool admission was sized for serial
+	// scoring (4). Raise both to the run's effective case concurrency before any
+	// case starts, or overlapping /run calls are answered 429 before the call is
+	// booked or observed and an honest harness loses credit silently.
+	effectiveCaseConcurrency := caseConcurrencyForRun(req.BenchmarkRuntime)
+	if inferenceSessionID != "" &&
+		!s.broker.configureCaseConcurrency(inferenceSessionID, runID, effectiveCaseConcurrency) {
+		s.store.FailWith(runID, "ticket inference session is unavailable", toolEndpointInfrastructureFailure())
+		return
+	}
 	toolEndpoint, stopToolSrv, err := s.startToolServerForSession(
-		toolSrv, toolSourceIP, req.BenchVersion, inferenceSessionID,
+		toolSrv, toolSourceIP, req.BenchVersion, effectiveCaseConcurrency,
 	)
 	if err != nil {
 		s.store.FailWith(runID, "tool endpoint start failed: "+err.Error(), toolEndpointInfrastructureFailure())
@@ -1784,27 +1811,6 @@ func (s *server) runSizeJob(ctx context.Context, runID string, req submitRequest
 			}
 		}
 	}
-	effectiveCaseConcurrency := activeCaseConcurrency()
-	caseScopedInference := false
-	// Existing v9/v10 harnesses have one run-wide inference URL, so they retain
-	// non-overlapping attribution windows. An upgraded v10 harness explicitly
-	// advertises the additive per-case URL and can consume the operator-selected
-	// concurrency without changing dataset or scoring semantics.
-	if scope == scorer.ScopeScored && req.BenchVersion >= protocol.BenchVersionV9 {
-		effectiveCaseConcurrency = 1
-		if req.BenchVersion >= protocol.BenchVersionV10 && req.BenchmarkRuntime != nil &&
-			req.BenchmarkRuntime.CaseConcurrency > 1 {
-			if runner.SupportsCaseScopedInference(ctx, harnessURL) {
-				effectiveCaseConcurrency = req.BenchmarkRuntime.CaseConcurrency
-				caseScopedInference = true
-			} else {
-				log.Printf(
-					"run %s: harness lacks case_scoped_inference_v1; retaining serial attribution",
-					runID,
-				)
-			}
-		}
-	}
 	toolRunUserID := ""
 	if harnessProjection != nil {
 		toolRunUserID = harnessProjection.WireUserID(gen.PrimaryUser)
@@ -1819,22 +1825,11 @@ func (s *server) runSizeJob(ctx context.Context, runID string, req submitRequest
 	//    written per index so the report order is identical to sequential
 	//    execution regardless of completion order.
 	observedTool, cappedTool := 0, 0
-	// captureCounterfactualSpecs is set for scored v12+ runs: the shadow
-	// counterfactual pass (Bench v12 causal model-dependence) re-runs each
-	// model-reached case, so it must capture each case's re-run inputs (wire id,
-	// prompt, tools, per-case tool endpoint, user) alongside the transcript.
-	captureCounterfactualSpecs := scope == scorer.ScopeScored && req.BenchVersion >= protocol.BenchVersionV12
 	s.store.SetStage(runID, store.StatusRunning, 0, total)
 	toolResults := make([]protocol.CaseScore, len(toolCases))
 	toolWasObserved := make([]bool, len(toolCases))
 	toolWasCapped := make([]bool, len(toolCases))
 	toolTranscripts := make([]transcriptCase, len(toolCases))
-	toolCounterfactualSpecs := make([]counterfactualCaseSpec, len(toolCases))
-	// Bench v12 answer-stuffing specs (per-case computed-answer provenance data).
-	// Tool cases have no scalar expected answer, so they are never in the computed
-	// slice (computed=false -> excluded); the entry is still allocated so the spec
-	// slice stays index-aligned with perCase/transcripts.
-	toolAnswerStuffingSpecs := make([]answerStuffingCaseSpec, len(toolCases))
 	var projectionFailure error
 	var projectionFailureOnce sync.Once
 	recordProjectionFailure := func(err error) {
@@ -1845,7 +1840,7 @@ func (s *server) runSizeJob(ctx context.Context, runID string, req submitRequest
 	runBounded(ctx, len(toolCases), effectiveCaseConcurrency, func(i int) {
 		c := toolCases[i]
 		caseToolEndpoint := toolEndpoint.forCase(c.ID, toolRunUserID)
-		resp, execution, runErr := s.runCaseWithModelAttribution(ctx, inferenceSessionID, harnessURL, c.ID, c.Prompt, tools, runner.CaseOptions{ToolEndpoint: caseToolEndpoint, UserID: toolRunUserID, BenchVersion: req.BenchVersion, CaseScopedInference: caseScopedInference})
+		resp, execution, runErr := s.runCaseWithModelAttribution(ctx, inferenceSessionID, harnessURL, c.ID, c.Prompt, tools, runner.CaseOptions{ToolEndpoint: caseToolEndpoint, UserID: toolRunUserID, BenchVersion: req.BenchVersion})
 		observed := toolSrv.Observed(c.ID)
 		cs := scorer.ScoreToolCaseObservedForVersion(c, resp, runErr == nil, observed, scope, req.BenchVersion)
 		cs = applyV10ToolProvenance(req.BenchVersion, scope, cs, resp, observed, execution)
@@ -1902,32 +1897,6 @@ func (s *server) runSizeJob(ctx context.Context, runID string, req submitRequest
 			cs.CaseID = transcriptID
 		}
 		toolTranscripts[i] = transcriptCase{CaseID: transcriptID, Kind: protocol.KindTool, Response: transcriptResponse, Observed: transcriptObserved, Execution: execution}
-		if captureCounterfactualSpecs {
-			// Bench v12 counterfactual grader for THIS tool case: re-scores any
-			// RunResponse against the case's expected answer with the same
-			// deterministic scorer the clean pass used. Scope-practice + self-report
-			// (observed=nil) so both the clean and the ablated responses are graded on
-			// the same footing (the scored unobserved cap would otherwise zero every
-			// ablated tool answer and manufacture false dependence). The closure
-			// captures the settled fixture, so result-usage cases keep grading the
-			// served needle/decoy.
-			cfCase := c
-			cfFixture := fixture
-			cfVersion := req.BenchVersion
-			grade := func(r protocol.RunResponse) float64 {
-				g := scorer.ScoreToolCaseObservedForVersion(cfCase, r, true, nil, scorer.ScopePractice, cfVersion)
-				if datagen.IsResultUsage(cfCase.Category) {
-					g = scorer.ComposeResultUsageForVersion(cfVersion, g, r.FinalText, cfFixture.NeedleValue(), cfFixture.DecoyValue())
-				} else {
-					g = scorer.FinishTool(g)
-				}
-				return g.Score
-			}
-			toolCounterfactualSpecs[i] = counterfactualCaseSpec{caseID: c.ID, prompt: c.Prompt, tools: tools, toolEndpoint: caseToolEndpoint, userID: toolRunUserID, grade: grade}
-			// A tool case has no scalar expected answer to stuff: keep it out of both
-			// the provable and the loose computed slices while preserving index alignment.
-			toolAnswerStuffingSpecs[i] = answerStuffingCaseSpec{caseID: c.ID, computed: false, computedLoose: false}
-		}
 		toolResults[i] = cs
 		s.store.AppendPartial(runID, cs) // store append is mutex-guarded
 	})
@@ -1951,29 +1920,6 @@ func (s *server) runSizeJob(ctx context.Context, runID string, req submitRequest
 		}
 	}
 	transcripts := append(make([]transcriptCase, 0, total), toolTranscripts...)
-	counterfactualSpecs := append(make([]counterfactualCaseSpec, 0, total), toolCounterfactualSpecs...)
-	answerStuffingSpecs := append(make([]answerStuffingCaseSpec, 0, total), toolAnswerStuffingSpecs...)
-	// Per-case seeded evidence text, keyed by pair id, so a memory case's expected
-	// answer can be tested for verbatim presence in its own declared evidence. A
-	// COMPUTED answer (absent from that evidence) is in the v12 answer-stuffing
-	// slice; a verbatim-recall answer is excluded. Unresolved evidence is treated
-	// conservatively as non-computed (excluded) downstream.
-	seededEvidenceByPairID := make(map[string]string)
-	addSeededPairs := func(pairs []protocol.MemoryPair) {
-		for _, pair := range pairs {
-			seededEvidenceByPairID[pair.PairID] = pair.Prompt + " " + pair.Response
-		}
-	}
-	for _, seedWave := range memSuite.Waves {
-		addSeededPairs(seedWave.Pairs)
-	}
-	addSeededPairs(iso.SecondaryWave.Pairs)
-	// Value-token hash union over the ENTIRE run's retrievable seeded memory, so a
-	// memory case's expected answer can be tested for presence ANYWHERE in memory
-	// (Change-1 provability): a computed answer that appears nowhere in seeded memory
-	// could not have been legitimately retrieved, while one that numerically equals an
-	// operand already in memory is excluded here as a coincidence.
-	seededMemoryValues := buildSeededMemoryValueSet(seededEvidenceByPairID)
 
 	// Historical local-embedding versions retain their frozen boundary: tool
 	// cases may overlap, then the embedding-heavy seed/query phase is admitted.
@@ -2037,8 +1983,6 @@ func (s *server) runSizeJob(ctx context.Context, runID string, req submitRequest
 		waveCases := casesByWave[w]
 		waveResults := make([]protocol.CaseScore, len(waveCases))
 		waveTranscripts := make([]transcriptCase, len(waveCases))
-		waveCounterfactualSpecs := make([]counterfactualCaseSpec, len(waveCases))
-		waveAnswerStuffingSpecs := make([]answerStuffingCaseSpec, len(waveCases))
 		runBounded(ctx, len(waveCases), effectiveCaseConcurrency, func(i int) {
 			sc := waveCases[i]
 			mc := sc.Case
@@ -2049,7 +1993,7 @@ func (s *server) runSizeJob(ctx context.Context, runID string, req submitRequest
 				uid = wave.UserID
 			}
 			caseToolEndpoint := toolEndpoint.forCase(mc.ID, uid)
-			resp, execution, runErr := s.runCaseWithModelAttribution(ctx, inferenceSessionID, harnessURL, mc.ID, mc.Question, tools, runner.CaseOptions{ToolEndpoint: caseToolEndpoint, UserID: uid, BenchVersion: req.BenchVersion, CaseScopedInference: caseScopedInference})
+			resp, execution, runErr := s.runCaseWithModelAttribution(ctx, inferenceSessionID, harnessURL, mc.ID, mc.Question, tools, runner.CaseOptions{ToolEndpoint: caseToolEndpoint, UserID: uid, BenchVersion: req.BenchVersion})
 			observedCalls := toolSrv.Observed(mc.ID)
 			resp = withObservedTrajectory(resp, observedCalls)
 			gradedResp := resp
@@ -2097,36 +2041,6 @@ func (s *server) runSizeJob(ctx context.Context, runID string, req submitRequest
 				cs.CaseID = transcriptID
 			}
 			waveTranscripts[i] = transcriptCase{CaseID: transcriptID, Kind: protocol.KindMemory, UserID: transcriptUser, Response: transcriptResponse, Observed: transcriptObserved, Execution: execution}
-			if captureCounterfactualSpecs {
-				// Bench v12 counterfactual grader for THIS memory case: the public
-				// deterministic memory grader over any RunResponse, scoring its answer
-				// against the case's expected answer. The clean and ablated responses go
-				// through the same grader so the verdict measures whether correctness
-				// survived full model ablation.
-				cfMemCase := mc
-				grade := func(r protocol.RunResponse) float64 {
-					return scorer.GradeMemory(cfMemCase, r).Score
-				}
-				waveCounterfactualSpecs[i] = counterfactualCaseSpec{caseID: mc.ID, prompt: mc.Question, tools: tools, toolEndpoint: caseToolEndpoint, userID: uid, grade: grade}
-				// Bench v12 answer-stuffing spec for THIS memory case. The answer enters the
-				// flagged slice only when it is PROVABLY computed: NOT verbatim in the case's
-				// own declared evidence (normal RAG / verbatim recall excluded) AND absent
-				// from the ENTIRE run's retrievable seeded memory values (so no legitimate
-				// retrieval could surface it, which also excludes the operand-equals-answer
-				// coincidence). Any unresolved evidence pin conservatively marks the case
-				// non-computed so an honest retrieval is never flagged.
-				caseCandidates := answerStuffingCandidates(mc)
-				waveAnswerStuffingSpecs[i] = answerStuffingCaseSpec{
-					caseID:   mc.ID,
-					computed: memoryAnswerIsProvablyComputed(mc, sc.RequiredPairIDs, seededEvidenceByPairID, seededMemoryValues, caseCandidates),
-					// computedLoose is the weaker "not verbatim-recall" flag (regardless of
-					// whether the answer value also appears elsewhere in seeded memory), so a
-					// coinciding-value stuffer the provable slice excludes still feeds the
-					// loose systematic-review signal.
-					computedLoose:    memoryAnswerIsComputed(mc, sc.RequiredPairIDs, seededEvidenceByPairID),
-					answerCandidates: caseCandidates,
-				}
-			}
 			waveResults[i] = cs
 			s.store.AppendPartial(runID, cs) // store append is mutex-guarded
 		})
@@ -2142,22 +2056,11 @@ func (s *server) runSizeJob(ctx context.Context, runID string, req submitRequest
 		}
 		perCase = append(perCase, waveResults...)
 		transcripts = append(transcripts, waveTranscripts...)
-		counterfactualSpecs = append(counterfactualSpecs, waveCounterfactualSpecs...)
-		answerStuffingSpecs = append(answerStuffingSpecs, waveAnswerStuffingSpecs...)
 	}
 	// Close broker access before scoring/accounting. The once-guarded deferred
 	// cleanup still handles every early return, cancel, and panic above.
 	//
-	// A scored v12 run defers this close: the Bench v12 counterfactual pass below
-	// still needs the live embedding lane for its (chat-substituted) re-runs. It
-	// runs AFTER the clean relay accounting is snapshotted, so its provider
-	// activity is outside that snapshot; the deferred endEmbeddingPhase() (or this
-	// explicit call after the pass) tears the lane down.
-	runV12Counterfactual := scope == scorer.ScopeScored && req.BenchVersion >= protocol.BenchVersionV12 &&
-		inferenceSessionID != "" && s.broker != nil
-	if !runV12Counterfactual {
-		endEmbeddingPhase()
-	}
+	endEmbeddingPhase()
 
 	// The relay owns authoritative provider-delivery evidence. Check it before
 	// scoring or persistence: any upstream infrastructure failure during this
@@ -2193,28 +2096,6 @@ func (s *server) runSizeJob(ctx context.Context, runID string, req submitRequest
 			s.failRelayUnavailable(runID, err)
 			return
 		}
-	}
-
-	// Bench v12 causal model-dependence: SHADOW counterfactual pass (issue #532).
-	// It runs ONLY after the clean relay accounting above is captured into
-	// tokenUsage/relayExecution, so its re-runs — synthetic (provider-free) chat
-	// plus live embeddings — cannot move token usage, relay execution evidence,
-	// the model_use gate, or any per-case score. It writes ONLY the two per-case
-	// counterfactual telemetry fields on the transcript slice, which the v12
-	// dependence gate reads in applyV9BaseEvidence below.
-	if runV12Counterfactual {
-		populateV12Counterfactual(ctx, runID, seed, req.BenchVersion, perCase, transcripts, counterfactualSpecs,
-			&brokerCounterfactualRunner{
-				server: s, inferenceSessionID: inferenceSessionID, runID: runID,
-				harnessURL: harnessURL, benchVersion: req.BenchVersion,
-			})
-		// Bench v12 Class-D answer-stuffing: PASSIVE provenance pass over the broker's
-		// recorded clean-pass model I/O. It settles the two per-case telemetry fields
-		// the answer-stuffing gate reads and never re-runs the harness or touches any
-		// score input; it must run before the broker session is torn down below.
-		populateV12AnswerStuffing(runID, req.BenchVersion, perCase, transcripts, answerStuffingSpecs,
-			&brokerCaseModelIOSource{server: s, inferenceSessionID: inferenceSessionID})
-		endEmbeddingPhase()
 	}
 
 	// 6. scoring — aggregate + finish. Protocol reachability probes are
@@ -2549,26 +2430,23 @@ func (s *server) startToolServer(
 	sandboxSourceIP string,
 	benchVersion int,
 ) (endpoint observedToolEndpoint, stop func(), err error) {
-	return s.startToolServerForSession(h, sandboxSourceIP, benchVersion, "")
+	return s.startToolServerForSession(h, sandboxSourceIP, benchVersion, caseConcurrencyForRun(nil))
 }
 
 func (s *server) startToolServerForSession(
 	h http.Handler,
 	sandboxSourceIP string,
 	benchVersion int,
-	inferenceSessionID string,
+	caseConcurrency int,
 ) (endpoint observedToolEndpoint, stop func(), err error) {
 	if sandboxSourceIP != "" {
 		requireCaseCapability := benchVersion >= protocol.BenchVersionV9
-		provenanceSessionID := ""
-		if benchVersion >= protocol.BenchVersionV10 {
-			if inferenceSessionID == "" {
-				return observedToolEndpoint{}, func() {}, fmt.Errorf("v10 tool provenance session unavailable")
-			}
-			provenanceSessionID = inferenceSessionID
-		}
-		route, unregister, registerErr := s.broker.registerToolWithProvenance(
-			h, sandboxSourceIP, s.allowPrivate, requireCaseCapability, provenanceSessionID,
+		// Concurrent /run does not open exclusive case windows, so model-emitted
+		// tool matching cannot be attributed per case. HMAC case capability plus
+		// source IP remain the authorization; the mock records observation. The
+		// route's per-source slots cover the run's overlapping cases.
+		route, unregister, registerErr := s.broker.registerToolRoute(
+			h, sandboxSourceIP, s.allowPrivate, requireCaseCapability, "", caseConcurrency,
 		)
 		if registerErr != nil {
 			return observedToolEndpoint{}, func() {}, registerErr
