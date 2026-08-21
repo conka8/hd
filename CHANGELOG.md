@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.102.0 (2026-08-21)
+
+### Features
+
+- **platform**: Count down to the next weight fold and emission payout
+  ([#1065](https://github.com/ditto-assistant/ditto-subnet/pull/1065),
+  [`21a9308`](https://github.com/ditto-assistant/ditto-subnet/commit/21a930843dd3696db4aba6f040fbe057d3d4c162))
+
+
 ## v0.101.0 (2026-08-21)
 
 ### Features
