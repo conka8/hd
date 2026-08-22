@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.106.2 (2026-08-22)
+
+### Bug Fixes
+
+- **inference**: Raise chat body, max tokens, and request budget
+  ([#1094](https://github.com/ditto-assistant/ditto-subnet/pull/1094),
+  [`9001e7f`](https://github.com/ditto-assistant/ditto-subnet/commit/9001e7fa601dbae367428581e3f7eea291518981))
+
+- **validator**: Keep KOTH hysteresis with efficiency ranking
+  ([#1099](https://github.com/ditto-assistant/ditto-subnet/pull/1099),
+  [`9b14bb0`](https://github.com/ditto-assistant/ditto-subnet/commit/9b14bb04b080fbb2820b430c10eca0432c25bcba))
+
+
 ## v0.106.1 (2026-08-22)
 
 ### Bug Fixes
