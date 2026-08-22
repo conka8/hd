@@ -2,6 +2,23 @@
 
 <!-- version list -->
 
+## v0.103.3 (2026-08-22)
+
+### Bug Fixes
+
+- **platform**: Answer inference runtime metrics in seconds, not minutes
+  ([#1071](https://github.com/ditto-assistant/ditto-subnet/pull/1071),
+  [`1bd0a73`](https://github.com/ditto-assistant/ditto-subnet/commit/1bd0a7321a40729ed865d20c8f6dd3197e6beec5))
+
+- **platform**: Mint every tooltip description id from one counter
+  ([#1080](https://github.com/ditto-assistant/ditto-subnet/pull/1080),
+  [`6d86da6`](https://github.com/ditto-assistant/ditto-subnet/commit/6d86da62e31b6ca71f1ba2d0414ae3f292f56e86))
+
+- **platform**: Reclaim idle retest leases and widen eviction
+  ([#1078](https://github.com/ditto-assistant/ditto-subnet/pull/1078),
+  [`b4c07a9`](https://github.com/ditto-assistant/ditto-subnet/commit/b4c07a901ec75ad12615749aa3b19faf588c47e1))
+
+
 ## v0.103.2 (2026-08-22)
 
 ### Bug Fixes
