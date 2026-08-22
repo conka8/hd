@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.104.0 (2026-08-22)
+
+### Features
+
+- **screener**: Lead on StoryArc, money formatter, world_shape_rule
+  ([#1085](https://github.com/ditto-assistant/ditto-subnet/pull/1085),
+  [`d43cb96`](https://github.com/ditto-assistant/ditto-subnet/commit/d43cb961b2c69263ee7f3c23fcff98b5811641f1))
+
+
 ## v0.103.3 (2026-08-22)
 
 ### Bug Fixes
