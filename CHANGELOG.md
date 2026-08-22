@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.103.2 (2026-08-22)
+
+### Bug Fixes
+
+- **platform**: Persist allowlisted confirmation prepare-report 409s
+  ([#1077](https://github.com/ditto-assistant/ditto-subnet/pull/1077),
+  [`d8388c9`](https://github.com/ditto-assistant/ditto-subnet/commit/d8388c9e79d153a6f4802a77ccea78d750dd5f85))
+
+
 ## v0.103.1 (2026-08-22)
 
 ### Bug Fixes
