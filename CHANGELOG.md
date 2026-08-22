@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.106.1 (2026-08-22)
+
+### Bug Fixes
+
+- **bench**: Raise confirmation embedding ablation budget
+  ([#1100](https://github.com/ditto-assistant/ditto-subnet/pull/1100),
+  [`465fa9a`](https://github.com/ditto-assistant/ditto-subnet/commit/465fa9ac931411fb82323d1d608593bb83f7fd46))
+
+
 ## v0.106.0 (2026-08-22)
 
 ### Features
