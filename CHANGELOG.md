@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.105.4 (2026-08-22)
+
+### Bug Fixes
+
+- **platform**: Show v11 memory timeline
+  ([#1095](https://github.com/ditto-assistant/ditto-subnet/pull/1095),
+  [`2a8f4ee`](https://github.com/ditto-assistant/ditto-subnet/commit/2a8f4eef0bbdfcd0f3080d72829ed39691564a01))
+
+
 ## v0.105.3 (2026-08-22)
 
 ### Bug Fixes
