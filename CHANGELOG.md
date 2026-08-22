@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.106.0 (2026-08-22)
+
+### Features
+
+- **dashboard**: Lead the overview with a masthead band
+  ([#1096](https://github.com/ditto-assistant/ditto-subnet/pull/1096),
+  [`aa19e3e`](https://github.com/ditto-assistant/ditto-subnet/commit/aa19e3e5670adad34ea5b352b68c4aec328171ff))
+
+
 ## v0.105.4 (2026-08-22)
 
 ### Bug Fixes
