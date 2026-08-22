@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.105.3 (2026-08-22)
+
+### Bug Fixes
+
+- **backroom**: Parse unused-reader LongMem zero evidence
+  ([#1097](https://github.com/ditto-assistant/ditto-subnet/pull/1097),
+  [`bd5d656`](https://github.com/ditto-assistant/ditto-subnet/commit/bd5d6561b2ba9ef06556a6ac98ca4c729b30dad7))
+
+
 ## v0.105.2 (2026-08-22)
 
 ### Bug Fixes
