@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.104.1 (2026-08-22)
+
+### Bug Fixes
+
+- **platform**: Refuse retry grants for agent-attributable exhaustion
+  ([#1046](https://github.com/ditto-assistant/ditto-subnet/pull/1046),
+  [`9ed99a4`](https://github.com/ditto-assistant/ditto-subnet/commit/9ed99a4e97e4d7d604dfbfa236e44ad39ca413a7))
+
+
 ## v0.104.0 (2026-08-22)
 
 ### Features
