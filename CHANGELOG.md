@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.106.3 (2026-08-22)
+
+### Bug Fixes
+
+- **platform**: Reopen rejected auto-copy ATH holds
+  ([#1104](https://github.com/ditto-assistant/ditto-subnet/pull/1104),
+  [`9286773`](https://github.com/ditto-assistant/ditto-subnet/commit/9286773d860078cac9d10ecafc8c769bc17aac99))
+
+
 ## v0.106.2 (2026-08-22)
 
 ### Bug Fixes
