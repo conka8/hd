@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.105.2 (2026-08-22)
+
+### Bug Fixes
+
+- **platform**: Stop comparing ablation evidence and profile contracts
+  ([#1084](https://github.com/ditto-assistant/ditto-subnet/pull/1084),
+  [`96a5499`](https://github.com/ditto-assistant/ditto-subnet/commit/96a54999b5bc46afe04057e3e2b85f2e6d62caba))
+
+
 ## v0.105.1 (2026-08-22)
 
 ### Bug Fixes
