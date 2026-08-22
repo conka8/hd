@@ -806,7 +806,100 @@ class TestComputeWeightsWithBand:
         )
 
         assert _effective_composite(entries[-1]) > _effective_composite(entries[0])
-        assert weights == {"banblackycat-v7": pytest.approx(1.0)}
+        # 0.000664 quality lead is inside the decayed dethrone band, so the
+        # earliest entry keeps the crown. Efficiency still ranks the raw
+        # leader (banblackycat over omar at equal 0.997012).
+        assert weights == {"white-bolt": pytest.approx(1.0)}
+        ranked = compute_weights(
+            entries,
+            margin=0.007,
+            tail_size=3,
+            rank_shares=(0.65, 0.14, 0.10, 0.11),
+            dethrone_z=1.64,
+        )
+        assert ranked["white-bolt"] == pytest.approx(0.65)
+        assert ranked["banblackycat-v7"] == pytest.approx(0.14)
+
+    def test_efficiency_does_not_skip_hysteresis_on_a_sub_margin_lead(self) -> None:
+        """A later 0.0008 official lead is raw leader, not champion."""
+        aceron = _e(
+            "aceron",
+            0.903484,
+            bench_version=11,
+            efficiency_factor=1.0,
+            v9_full_composite=0.903484,
+            minutes=0,
+        )
+        unione = _e(
+            "unione",
+            0.904288,
+            bench_version=11,
+            efficiency_factor=1.0,
+            v9_full_composite=0.904288,
+            minutes=180,
+        )
+
+        champ = select_champion([unione, aceron], margin=0.007, dethrone_z=0.0)
+        assert champ is not None
+        assert champ.miner_hotkey == "aceron"
+        weights = compute_weights(
+            [unione, aceron],
+            margin=0.007,
+            tail_size=1,
+            rank_shares=(0.65, 0.35),
+            dethrone_z=0.0,
+        )
+        assert weights == {
+            "aceron": pytest.approx(0.65),
+            "unione": pytest.approx(0.35),
+        }
+
+    def test_a_foreign_efficiency_factor_does_not_skip_hysteresis(self) -> None:
+        """A factor elsewhere on the ledger must not turn off the 0.007 gate."""
+        earlier = _e("aceron", 0.903484, minutes=0)
+        later = _e("unione", 0.904288, minutes=180)
+        bystander = _e(
+            "omar",
+            0.86,
+            minutes=10,
+            bench_version=9,
+            efficiency_factor=1.1,
+            v9_full_composite=0.86,
+        )
+
+        champ = select_champion(
+            [later, earlier, bystander], margin=0.007, dethrone_z=0.0
+        )
+        assert champ is not None
+        assert champ.miner_hotkey == "aceron"
+
+    def test_a_three_seed_paired_outlier_cannot_demand_a_0_03_lead(self) -> None:
+        """2026-08-22 aceron 0.92 vs goal 0.89: n=3 paired SE exploded.
+
+        Shared-seed diffs (-0.015, +0.094, -0.004) mean +0.025 with SE 0.035,
+        so z*se = 0.057. Uncapped, decay asks for +0.032 and holds the 0.88
+        champion. Cap the statistical term at 2*margin so a thin sample cannot
+        set the bar.
+        """
+        goal = _e(
+            "goal",
+            0.889233,
+            confirmations=[0.882, 0.82, 0.90],
+            seeds=[1, 2, 3],
+            bench_version=11,
+            minutes=0,
+        )
+        aceron = _e(
+            "aceron",
+            0.921833,
+            confirmations=[0.882 - 0.015292, 0.82 + 0.094218, 0.90 - 0.003975],
+            seeds=[1, 2, 3],
+            bench_version=11,
+            minutes=60,
+        )
+        champ = select_champion([aceron, goal], margin=0.007, dethrone_z=1.64)
+        assert champ is not None
+        assert champ.miner_hotkey == "aceron"
 
     def test_default_z_zero_is_backward_compatible(self) -> None:
         # No dethrone_z passed → fixed composite-point margin, even with stderr present.
@@ -951,16 +1044,17 @@ class TestBeatsPaired:
         )
         assert _beats(chal_unpaired, champ, margin=0.02, dethrone_z=1.64) is False
 
-    def test_noisy_paired_lead_is_held_by_the_band(self) -> None:
-        # Same ~0.05 mean lead but the per-seed differences swing (se_diff large),
-        # so the paired z-band holds the incumbent.
+    def test_noisy_paired_lead_is_capped_so_a_0_05_mean_still_dethrones(self) -> None:
+        # Same ~0.05 mean lead but the per-seed differences swing (se_diff large).
+        # Uncapped, z*se ≈ 0.12 would hold the incumbent. The statistical cap at
+        # 2*margin keeps a thin sample from setting a 0.03+ bar.
         champ = _e(
             "champ", 0.80, confirmations=[0.80, 0.79, 0.81], seeds=[1, 2, 3], minutes=0
         )
         chal = _e(
             "chal", 0.85, confirmations=[0.95, 0.70, 0.90], seeds=[1, 2, 3], minutes=1
         )
-        assert _beats(chal, champ, margin=0.02, dethrone_z=1.64) is False
+        assert _beats(chal, champ, margin=0.02, dethrone_z=1.64) is True
 
     def test_falls_back_to_unpaired_without_seeds(self) -> None:
         # No seeds on either side -> unpaired median/independent-sum path, unchanged.
@@ -1003,7 +1097,14 @@ class TestContestedConfirmationSet:
         )
         assert [e.agent_id for e in got] == [champ.agent_id, chall.agent_id]
 
-    def test_v9_factor_scales_the_contested_uncertainty_band(self) -> None:
+    def test_v9_quality_gap_is_contested_on_quality_not_adjusted_score(self) -> None:
+        """Factors must not skip hysteresis or hide a 0.18 quality gap.
+
+        The pair's efficiency-adjusted scores sit close together, but
+        authoritative quality is 0.80 vs 0.62. That is a clear loss, so the
+        contested set is empty. A 0.01 quality gap with the same factors stays
+        inside the unpaired band and is still contested.
+        """
         champ = _e(
             "5A" + "a" * 44,
             0.8,
@@ -1012,7 +1113,7 @@ class TestContestedConfirmationSet:
             efficiency_factor=0.85,
             v9_full_composite=0.8,
         )
-        chall = _e(
+        far = _e(
             "5B" + "b" * 44,
             0.62,
             stderr=0.04,
@@ -1021,12 +1122,26 @@ class TestContestedConfirmationSet:
             v9_full_composite=0.62,
             minutes=1,
         )
-
-        got = contested_confirmation_set(
-            [champ, chall], current_version=9, margin=0.02, dethrone_z=1.64
+        near = _e(
+            "5C" + "c" * 44,
+            0.79,
+            stderr=0.04,
+            bench_version=9,
+            efficiency_factor=1.1,
+            v9_full_composite=0.79,
+            minutes=2,
         )
 
-        assert [entry.agent_id for entry in got] == [champ.agent_id, chall.agent_id]
+        assert (
+            contested_confirmation_set(
+                [champ, far], current_version=9, margin=0.02, dethrone_z=1.64
+            )
+            == []
+        )
+        got = contested_confirmation_set(
+            [champ, near], current_version=9, margin=0.02, dethrone_z=1.64
+        )
+        assert [entry.agent_id for entry in got] == [champ.agent_id, near.agent_id]
 
     def test_headroom_slope_keeps_clear_v9_pair_out_of_contested_set(self) -> None:
         champ = _e(
@@ -1046,7 +1161,7 @@ class TestContestedConfirmationSet:
             v9_full_composite=0.5,
             minutes=1,
         )
-        expected_band = 1.64 * math.sqrt(2 * (0.04 * 0.9) ** 2)
+        expected_band = 1.64 * math.sqrt(2 * (0.04) ** 2)
 
         assert _unpaired_band(chall, champ, margin=0.02, dethrone_z=1.64) == (
             pytest.approx(expected_band)
