@@ -215,7 +215,19 @@
       "search": ["rg -n 'workload_identity|service_account|secret|cloudflare' infra/terraform", "rg -n 'deploy|systemd|pm2|worker' infra/ansible .github/workflows"],
       "validate": ["terraform -chdir=infra/terraform/stacks/gcp-platform fmt -check", "terraform -chdir=infra/terraform/stacks/gcp-platform validate", "terraform -chdir=infra/terraform/stacks/cloudflare-dittobench validate"],
       "invariants": ["Never read, print, or persist provider secret values while testing integrations.", "Automatic app deploys and protected infrastructure apply are separate authority boundaries."],
-      "related": ["release-delivery", "screener-capacity", "backroom"]
+      "related": ["release-delivery", "screener-capacity", "backroom", "preview-channels"]
+    },
+    {
+      "id": "preview-channels",
+      "title": "Preview planning and the loopback mock engine",
+      "keywords": ["preview", "localstack", "cheatcode", "foundry", "stack-copy", "preview-control", "fault injection", "localnet"],
+      "summary": "Preview plan validation and a loopback-only overlay/fault harness tested locally and in GitHub Actions; it does not deploy the planned stack.",
+      "owns": ["ditto/preview", "preview", "scripts/preview", ".github/workflows/preview.yml", ".agents/skills/ditto-subnet-preview"],
+      "read": ["preview/README.md", ".agents/skills/ditto-subnet-preview/SKILL.md"],
+      "search": ["rg -n 'compose\\(|assert_isolated|inject_provider' ditto/preview", "rg -n 'profiles:' .github/workflows/preview.yml"],
+      "validate": ["uv run pytest ditto/tests/preview -q", "uv run python -m ditto.preview compose dashboard"],
+      "invariants": ["Only dashboard plans may attach to production Platform; Backroom requires isolation.", "preview-control accepts only loopback endpoints and binds.", "The workflow validates controls but does not deploy resources or publish releases."],
+      "related": ["worktrees", "platform-api", "backroom", "infra-cloud"]
     }
   ]
 }
