@@ -2,6 +2,31 @@
 
 <!-- version list -->
 
+## v0.106.4 (2026-08-22)
+
+### Bug Fixes
+
+- **platform**: Reap crashed Targon Kaniko replicas immediately
+  ([#1111](https://github.com/ditto-assistant/ditto-subnet/pull/1111),
+  [`587c7a2`](https://github.com/ditto-assistant/ditto-subnet/commit/587c7a261d5ac884997ff72daefa56d2fba1418b))
+
+### Chores
+
+- **skills**: Apply backroom review bar in /mine before upload
+  ([#1106](https://github.com/ditto-assistant/ditto-subnet/pull/1106),
+  [`67c9dd8`](https://github.com/ditto-assistant/ditto-subnet/commit/67c9dd8fbc309e707980865819cc663c4727162a))
+
+- **skills**: Document overlapping /run and stack trunk fallback
+  ([#1107](https://github.com/ditto-assistant/ditto-subnet/pull/1107),
+  [`91b316b`](https://github.com/ditto-assistant/ditto-subnet/commit/91b316b9782bbfe6256247e7489c35aa5215a7ff))
+
+### Documentation
+
+- **skills**: Cover localstack scoring and foundry cheatcodes
+  ([#1102](https://github.com/ditto-assistant/ditto-subnet/pull/1102),
+  [`02e3df0`](https://github.com/ditto-assistant/ditto-subnet/commit/02e3df08f37be5bc4484dc7aab47d7afed401404))
+
+
 ## v0.106.3 (2026-08-22)
 
 ### Bug Fixes
