@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.105.0 (2026-08-22)
+
+### Features
+
+- **preview**: Add plan validation and secure mock controls
+  ([#1067](https://github.com/ditto-assistant/ditto-subnet/pull/1067),
+  [`0e8d4d6`](https://github.com/ditto-assistant/ditto-subnet/commit/0e8d4d61daf4c3f5a6ab264b34da39011808a72a))
+
+
 ## v0.104.1 (2026-08-22)
 
 ### Bug Fixes
