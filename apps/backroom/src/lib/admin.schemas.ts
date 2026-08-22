@@ -3142,6 +3142,14 @@ export const validatorFleetObservabilityMemberSchema = z
     reported_at: z.string().nullish().catch(null),
     seen_at: z.string().nullish().catch(null),
     orphaned_slots: z.array(publicOrphanedSlotSchema).catch([]),
+    claimed_slots: z
+      .array(
+        z.object({
+          slot_id: z.string(),
+          agent_id: z.string().uuid(),
+        }),
+      )
+      .catch([]),
     updater_status: validatorUpdaterStatusSchema,
     stack: z
       .object({
@@ -3194,6 +3202,7 @@ export const validatorFleetObservabilityMemberSchema = z
     active_benchmark_count: member.active_benchmarks.length,
     confirmation_benchmark_count: member.confirmation_benchmarks.length,
     orphaned_slot_count: member.orphaned_slots.length,
+    claimed_slots: member.claimed_slots,
     disk_percent: member.system_metrics?.disk_percent ?? null,
     cpu_percent: member.system_metrics?.cpu_percent ?? null,
     memory_percent: member.system_metrics?.memory_percent ?? null,
@@ -3777,6 +3786,13 @@ export const validatorAssignmentSchema = z.object({
   attempt_count: z.number().int().positive(),
   score_count: z.number().int().nonnegative(),
   provisional_composite: z.number().nullable(),
+  slot_id: z.string().nullish().default(null),
+  purpose: z
+    .enum(['legacy_unclassified', 'canonical_quorum', 'continual_retest'])
+    .nullish()
+    .default(null),
+  agent_status: z.string().nullish().default(null),
+  first_reported_at: z.string().nullish().default(null),
 })
 
 export const validatorAssignmentListSchema = z.object({
@@ -3866,6 +3882,11 @@ export const validationRetryTicketSchema = z.object({
   // deployment cannot tell you", which is a different claim from `false`,
   // "this expiry came with a reported reason".
   silently_expired: z.boolean().nullish().default(null),
+  purpose: z
+    .enum(['legacy_unclassified', 'canonical_quorum', 'continual_retest'])
+    .nullish()
+    .default(null),
+  first_reported_at: z.string().nullish().default(null),
 })
 
 export const validationRecoverySchema = z.object({
@@ -4044,12 +4065,15 @@ export const validationQueueEvictionSchema = z.object({
 })
 
 export const evictValidationResponseSchema = z.object({
-  eviction: validationQueueEvictionSchema,
+  // Null when the eviction only revoked live leases and left the era open
+  // (continual-retest zombies on scored or banned agents).
+  eviction: validationQueueEvictionSchema.nullish().default(null),
   // Empty on an idempotent replay: the leases are already gone and their audit
   // rows, not this list, are the record.
   evicted_leases: z.array(evictedLeaseSchema),
   freed_slots: z.number().int().nonnegative(),
   idempotent: z.boolean(),
+  era_closed: z.boolean().nullish().default(null),
 })
 
 // A third phrase, distinct from both of the others. Two of these three actions

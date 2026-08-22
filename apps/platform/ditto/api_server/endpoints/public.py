@@ -83,6 +83,7 @@ from ditto.api_models import (
     PublicChainEpoch,
     PublicChainWeight,
     PublicChainWeightsResponse,
+    PublicClaimedSlot,
     PublicCompositeBreakdown,
     PublicConfirmationProgress,
     PublicConfirmationScore,
@@ -164,7 +165,7 @@ from ditto.api_models.screener import (
 )
 from ditto.api_models.stack_health import ValidatorStackHealth
 from ditto.api_models.system_health import SystemMetrics
-from ditto.api_models.ticket_status import TicketStatus
+from ditto.api_models.ticket_status import TicketPurpose, TicketStatus
 from ditto.api_models.validator import (
     V9BaseEvidence,
     V9ConfirmationReceipt,
@@ -1043,6 +1044,36 @@ def _benchmark_stalled(
     return now - started_at >= earned
 
 
+def _ticket_purpose(ticket: object) -> TicketPurpose:
+    raw = getattr(ticket, "purpose", None)
+    if raw is None:
+        return TicketPurpose.LEGACY_UNCLASSIFIED
+    try:
+        return TicketPurpose(str(raw))
+    except ValueError:
+        return TicketPurpose.LEGACY_UNCLASSIFIED
+
+
+def _public_claimed_slots(raw: object) -> list[PublicClaimedSlot]:
+    if not isinstance(raw, list):
+        return []
+    claimed: list[PublicClaimedSlot] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        slot_id = entry.get("slot_id")
+        agent_id = entry.get("agent_id")
+        if not isinstance(slot_id, str) or agent_id is None:
+            continue
+        try:
+            claimed.append(
+                PublicClaimedSlot(slot_id=slot_id, agent_id=UUID(str(agent_id)))
+            )
+        except (TypeError, ValueError):
+            continue
+    return claimed
+
+
 def _public_benchmark_progress(
     work: ActiveValidatorWork,
     now: datetime,
@@ -1068,6 +1099,7 @@ def _public_benchmark_progress(
             agent_name=agent_name,
             bench_version=work.ticket.bench_version,
             started_at=started_at,
+            purpose=_ticket_purpose(work.ticket),
         )
     percent: int | None = None
     completed_checks: int | None = None
@@ -1111,6 +1143,7 @@ def _public_benchmark_progress(
         stalled=_benchmark_stalled(
             progress.stage, started_at, now, completed=progress.completed
         ),
+        purpose=_ticket_purpose(work.ticket),
     )
 
 
@@ -3969,6 +4002,9 @@ def _validator_heartbeats_response(
                     for work in confirmation_by_hotkey.get(row.validator_hotkey, [])
                 ],
                 orphaned_slots=orphans_by_hotkey.get(row.validator_hotkey, []),
+                claimed_slots=_public_claimed_slots(
+                    getattr(row, "claimed_slots", None)
+                ),
                 first_seen_at=_aware(row.first_seen_at),
                 reported_at=cast(datetime, _aware(row.reported_at)),
                 seen_at=seen_at,
