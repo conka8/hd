@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.105.1 (2026-08-22)
+
+### Bug Fixes
+
+- **platform**: Keep lineage time on sub-dethrone improvements
+  ([#1092](https://github.com/ditto-assistant/ditto-subnet/pull/1092),
+  [`9dac18b`](https://github.com/ditto-assistant/ditto-subnet/commit/9dac18b165e7282fe9e87df642695fd3f1baf0a8))
+
+
 ## v0.105.0 (2026-08-22)
 
 ### Features
