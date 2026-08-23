@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -36,6 +37,7 @@ from ditto_screener.l2_review import (
     L2_SAFETY_PROMPT_REVISION,
     L2_STARTER_MANIFESTS,
     L2_STATIC_HOLD_REVISION,
+    InProcessAnalyzerHarness,
     IsolatedCodingHarness,
     L2AuditJournal,
     L2InconclusiveError,
@@ -54,7 +56,9 @@ from ditto_screener.l2_review import (
     _parse_l2_review,
     _qualifies_for_direct_clear,
     _require_complete_analysis,
+    _response_output_and_usage,
     _review_adaptation_hold,
+    _safety_clearance_gaps,
     _served_generator_hold,
     _write_all,
 )
@@ -339,6 +343,100 @@ def _safe() -> SourceReviewObservation:
     )
 
 
+def test_response_output_rejects_null_output_and_model_error() -> None:
+    with pytest.raises(
+        ValueError, match="L2 model status:incomplete:max_output_tokens"
+    ):
+        _response_output_and_usage(
+            {
+                "error": None,
+                "error_type": None,
+                "output": None,
+                "usage": None,
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+            }
+        )
+    with pytest.raises(ValueError, match="output type:NoneType"):
+        _response_output_and_usage(
+            {
+                "error": None,
+                "error_type": None,
+                "output": None,
+                "usage": None,
+                "status": "completed",
+            }
+        )
+    with pytest.raises(ValueError, match="L2 model error:context_length"):
+        _response_output_and_usage(
+            {
+                "error": {"code": "context_length"},
+                "output": None,
+                "usage": None,
+                "status": "failed",
+            }
+        )
+
+
+def test_safety_clearance_does_not_require_l1_evidence_on_certified_low() -> None:
+    finding = {"confidence": 1.0, "evidence": []}
+    observation = SourceReviewObservation(
+        ok=True,
+        risk_level="low",
+        finding_digest="b" * 64,
+        categories=("none",),
+        finding=finding,
+    )
+    adjudicator = L2RunResult(
+        observation,
+        ({"path": "src/lib.rs", "sha256": "c" * 64},),
+        (
+            {"path": "src/lib.rs", "line": 1, "role": "context"},
+            {"path": "src/lib.rs", "line": 2, "role": "decision"},
+            {"path": "src/lib.rs", "line": 3, "role": "effect"},
+            {"path": "src/lib.rs", "line": 4, "role": "sink"},
+        ),
+        ("read_file", "submit_l2_review"),
+        L2Usage(),
+        False,
+        response_models=("openai/gpt-5.6-sol",),
+        resolution_basis="authoritative_model_tool_path",
+        dossier_complete=True,
+    )
+
+    assert _safety_clearance_gaps(_l1("low"), adjudicator) == ()
+
+
+def test_safety_clearance_names_unread_l1_paths() -> None:
+    finding = {"confidence": 1.0, "evidence": []}
+    observation = SourceReviewObservation(
+        ok=True,
+        risk_level="low",
+        finding_digest="b" * 64,
+        categories=("none",),
+        finding=finding,
+    )
+    adjudicator = L2RunResult(
+        observation,
+        ({"path": "src/other.rs", "sha256": "c" * 64},),
+        (
+            {"path": "src/other.rs", "line": 1, "role": "context"},
+            {"path": "src/other.rs", "line": 2, "role": "decision"},
+            {"path": "src/other.rs", "line": 3, "role": "effect"},
+            {"path": "src/other.rs", "line": 4, "role": "sink"},
+        ),
+        ("read_file", "submit_l2_review"),
+        L2Usage(),
+        False,
+        response_models=("openai/gpt-5.6-sol",),
+        resolution_basis="authoritative_model_tool_path",
+        dossier_complete=True,
+    )
+    gaps = _safety_clearance_gaps(_l1("medium"), adjudicator)
+
+    assert any(item.startswith("unread-l1-paths:src/main.rs") for item in gaps)
+
+
 def _clearance_certificate(safe: dict[str, object]) -> dict[str, object]:
     return {
         **safe,
@@ -388,6 +486,23 @@ async def test_clean_l1_skips_sol() -> None:
     assert result is l1.result
     assert l1.calls == 1
     assert l2.calls == 0
+
+
+async def test_certified_l1_low_escalates_when_always_escalate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SCREENER_L2_ALWAYS_ESCALATE", "true")
+    l1 = _FakeL1(_l1("low", clearance_certified=True))
+    l2 = _FakeL2(_model_result(_safe()))
+    layered = LayeredSourceReviewAgent(l1=l1, l2=l2, mode="enforce")  # type: ignore[arg-type]
+
+    result = await layered.review(
+        "unused", artifact_sha256="c" * 64, attempt_id=ATTEMPT
+    )
+
+    assert result.risk_level == "low"
+    assert l1.calls == 1
+    assert l2.calls == 1
 
 
 async def test_uncertified_l1_low_escalates_to_l2() -> None:
@@ -886,6 +1001,57 @@ def test_l2_safe_result_must_cover_every_l1_evidence_file(tmp_path: Path) -> Non
         )
 
 
+def test_safety_adjudicator_safe_result_requires_refutation_path(
+    tmp_path: Path,
+) -> None:
+    archive, artifact_sha = _tar(tmp_path, "fn main() {}")
+    repository = TarSourceRepository(str(archive))
+    digest = repository.member_sha256("src/main.rs")
+    value = {
+        "disposition": "safe",
+        "risk_level": "low",
+        "confidence": 1.0,
+        "resolution_basis": "authoritative_model_tool_path",
+        "categories": ["none"],
+        "analyzed_files": [{"path": "src/main.rs", "sha256": digest}],
+        "evidence": [],
+        "causal_path": [],
+        "summary": "safe",
+    }
+    with pytest.raises(ValueError, match="refutation causal path"):
+        _parse_l2_review(
+            value,
+            artifact_sha256=artifact_sha,
+            repository=repository,
+            prompt_revision=L2_SAFETY_PROMPT_REVISION,
+        )
+    value["causal_path"] = [
+        {"path": "src/main.rs", "line": 1, "role": "context"},
+        {"path": "src/main.rs", "line": 1, "role": "decision"},
+        {"path": "src/main.rs", "line": 1, "role": "effect"},
+        {"path": "src/main.rs", "line": 1, "role": "sink"},
+    ]
+    value["confidence"] = 0.99
+    with pytest.raises(ValueError, match="confidence is below 1.0"):
+        _parse_l2_review(
+            value,
+            artifact_sha256=artifact_sha,
+            repository=repository,
+            prompt_revision=L2_SAFETY_PROMPT_REVISION,
+        )
+    value["confidence"] = 1.0
+    observation, _analyzed, causal, basis = _parse_l2_review(
+        value,
+        artifact_sha256=artifact_sha,
+        repository=repository,
+        prompt_revision=L2_SAFETY_PROMPT_REVISION,
+    )
+    assert observation.ok is True
+    assert observation.risk_level == "low"
+    assert basis == "authoritative_model_tool_path"
+    assert len(causal) == 4
+
+
 def test_l2_safe_result_rejects_contradictory_evidence(tmp_path: Path) -> None:
     archive, artifact_sha = _tar(tmp_path, "fn main() {}")
     repository = TarSourceRepository(str(archive))
@@ -1090,6 +1256,39 @@ class _FakeProcess:
 
     async def wait(self) -> int:
         return 0
+
+
+async def test_inprocess_harness_indexes_workspace_without_docker(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "agent.py").write_text(
+        "def answer(message: str) -> str:\n    return message\n"
+    )
+    output = await InProcessAnalyzerHarness().run(tmp_path, "workspace_index", {})
+    payload = json.loads(output)
+    assert "error" not in payload
+    paths = [str(item["path"]) for item in payload["files"]]
+    assert "agent.py" in paths
+
+
+async def test_inprocess_starter_diff_ignores_non_provenance_json(
+    tmp_path: Path,
+) -> None:
+    """Package data/ also holds bench-categories-v1.json; that is not a starter."""
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "probe"\nversion = "0.0.0"\n'
+    )
+    output = await InProcessAnalyzerHarness().run(tmp_path, "starter_diff", {})
+    payload = json.loads(output)
+    assert "error" not in payload, payload
+    assert re.fullmatch(r"[0-9a-f]{40}", str(payload["revision"]))
+    assert isinstance(payload["added"], list)
+    assert isinstance(payload["removed"], list)
+
+
+async def test_inprocess_harness_rejects_unknown_command(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="non-allowlisted"):
+        await InProcessAnalyzerHarness().run(tmp_path, "rm_rf", {})
 
 
 async def test_harness_command_has_no_egress_secrets_or_host_mounts(
@@ -1500,6 +1699,7 @@ async def test_scorer_attention_blocks_direct_clear_and_requires_sol(
     assert requests[2]["reasoning"] == {"effort": "medium"}
     assert requests[3]["reasoning"] == {"effort": "medium"}
     assert result.observation.risk_level == "low"
+    assert result.observation.clearance_certified is True
     assert result.clearance_path == "l3_adjudicated_safe"
 
 
@@ -1728,6 +1928,8 @@ async def test_sol_request_is_provider_locked_cached_and_concurrency_safe(
         == "confirm_safe"
     )
     assert first.clearance_path == second.clearance_path == "l3_adjudicated_safe"
+    assert first.observation.clearance_certified is True
+    assert second.observation.clearance_certified is True
     assert first.response_models == (
         "moonshotai/kimi-k3-20260715",
         "openai/gpt-5.6-sol-20260709",
@@ -1861,6 +2063,7 @@ fn run() -> Answer {
     assert requests[0]["model"] == L2_MODEL
     assert requests[1]["model"] == "openai/gpt-5.6-sol"
     assert result.observation.risk_level == "low"
+    assert result.observation.clearance_certified is True
     assert result.clearance_path == "l3_adjudicated_safe"
     assert result.critic_disposition == "confirm_safe"
 
@@ -1919,6 +2122,7 @@ fn main() {
 
     assert len(requests) == 4
     assert result.observation.risk_level == "low"
+    assert result.observation.clearance_certified is True
     assert result.clearance_path == "l3_adjudicated_safe"
 
 
@@ -2759,11 +2963,8 @@ async def test_agreeing_safe_models_cannot_clear_original_scorer_lead(
     assert result.clearance_path == "l3_adjudicated_violation"
 
 
-@pytest.mark.parametrize(
-    ("adjudicator_confidence", "clears"), [(1.0, True), (0.99, False)]
-)
 async def test_adjudicator_requires_certificate_to_overturn_false_critic_challenge(
-    tmp_path: Path, adjudicator_confidence: float, clears: bool
+    tmp_path: Path,
 ) -> None:
     source = "fn main() { execute_real_tool(); }\nfn execute_real_tool() {}"
     archive, artifact_sha = _tar(tmp_path, source)
@@ -2801,7 +3002,7 @@ async def test_adjudicator_requires_certificate_to_overturn_false_critic_challen
     }
     adjudicated_safe = {
         **safe,
-        "confidence": adjudicator_confidence,
+        "confidence": 1.0,
         "causal_path": [
             {"path": "src/main.rs", "line": 1, "role": "context"},
             {"path": "src/main.rs", "line": 1, "role": "decision"},
@@ -2831,15 +3032,10 @@ async def test_adjudicator_requires_certificate_to_overturn_false_critic_challen
 
     assert requests == 4
     assert result.critic_disposition == "challenge"
-    if clears:
-        assert result.observation.risk_level == "low"
-        assert result.adjudicator_disposition == "overturn_to_safe"
-        assert result.clearance_path == "l3_adjudicated_safe"
-    else:
-        assert not result.observation.ok
-        assert result.observation.failure_disposition == "retryable_infra"
-        assert result.adjudicator_disposition == "inconclusive"
-        assert result.clearance_path == "l3_adjudicator_clearance_unproven"
+    assert result.observation.risk_level == "low"
+    assert result.observation.clearance_certified is True
+    assert result.adjudicator_disposition == "overturn_to_safe"
+    assert result.clearance_path == "l3_adjudicated_safe"
 
 
 async def test_critic_failure_cannot_clear_or_reject(tmp_path: Path) -> None:

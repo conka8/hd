@@ -217,15 +217,23 @@ def command_kaniko_probe(args: argparse.Namespace) -> int:
 
     starter_kit_sha = getattr(args, "starter_kit_sha", None)
     screen_contract = bool(getattr(args, "screen_contract", False))
+    publish_ttl = bool(getattr(args, "publish_ttl", False))
+    published: str | None = None
     if starter_kit_sha:
         if args.roundtrip:
             raise SystemExit("starter-kit Kaniko probe cannot use --roundtrip")
         agent_id = str(uuid4())
         attempt_id = str(uuid4())
+        published = (
+            f"ttl.sh/ditto-e2e-starter-{secrets.token_hex(6)}:2h"
+            if publish_ttl
+            else None
+        )
         script = starter_kit_rental_script(
             source_sha=starter_kit_sha,
             agent_id=agent_id,
             attempt_id=attempt_id,
+            publish_destination=published,
         )
         success_marker = "KANIKO_STARTER_PROBE_AVAILABLE"
         probe_kind = "starter-kit"
@@ -336,6 +344,8 @@ def command_kaniko_probe(args: argparse.Namespace) -> int:
                     if not contract["ok"]:
                         print(json.dumps(result))
                         return 8
+                if published:
+                    result["published_image"] = published
                 print(json.dumps(result))
                 break
             if "KANIKO_STARTER_PROBE_FAILED" in logs:
@@ -496,16 +506,29 @@ def command_runtime_probe(args: argparse.Namespace) -> int:
     if not isinstance(selected, dict) or int(selected.get("available", 0)) < 1:
         raise RuntimeError(f"{args.resource} is not currently available")
     uid: str | None = None
+    native = bool(getattr(args, "native_health", False))
     try:
         created = client.create_rental(
             name=f"ditto-runtime-probe-{secrets.token_hex(3)}",
             image=args.image,
             resource_name=args.resource,
-            commands=["/bin/sh", "-c"],
-            args=[
-                "mkdir -p /tmp/site; printf ok >/tmp/site/health; "
-                "cd /tmp/site; exec python -m http.server 8080"
-            ],
+            envs=(
+                [
+                    {"name": "OPENROUTER_API_KEY", "value": "sk-screener-smoke"},
+                    {"name": "DITTOBENCH_DB", "value": "/tmp/dittobench.db"},
+                ]
+                if native
+                else None
+            ),
+            commands=None if native else ["/bin/sh", "-c"],
+            args=(
+                None
+                if native
+                else [
+                    "mkdir -p /tmp/site; printf ok >/tmp/site/health; "
+                    "cd /tmp/site; exec python -m http.server 8080"
+                ]
+            ),
             ports=[{"port": 8080, "protocol": "TCP", "routing": "PROXIED"}],
         )
         uid = str(created["uid"])
@@ -526,7 +549,11 @@ def command_runtime_probe(args: argparse.Namespace) -> int:
             if health_url is not None:
                 try:
                     with urllib.request.urlopen(health_url, timeout=5) as response:
-                        if response.status == 200 and response.read(16) == b"ok":
+                        body = response.read(256)
+                        healthy = response.status == 200 and (
+                            native or body == b"ok"
+                        )
+                        if healthy:
                             print(
                                 json.dumps(
                                     {
@@ -534,6 +561,7 @@ def command_runtime_probe(args: argparse.Namespace) -> int:
                                         "status": state.get("status"),
                                         "ready_replicas": state.get("ready_replicas"),
                                         "capability": "AVAILABLE",
+                                        "native_health": native,
                                     },
                                     sort_keys=True,
                                 )
@@ -773,6 +801,12 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(length) or b"{{}}")
         if self.path == BASE + "/complete" and self.authorized():
             observation = body.get("observation", {{}})
+            finding = observation.get("finding") or {{}}
+            audit = observation.get("review_audit") or {{}}
+            if not isinstance(finding, dict):
+                finding = {{}}
+            if not isinstance(audit, dict):
+                audit = {{}}
             safe = {{
                 "ok": observation.get("ok"),
                 "risk_level": observation.get("risk_level"),
@@ -780,6 +814,10 @@ class Handler(BaseHTTPRequestHandler):
                 "clearance_certified": observation.get("clearance_certified"),
                 "error_code": observation.get("error_code"),
                 "finding_digest": observation.get("finding_digest"),
+                "failure_disposition": observation.get("failure_disposition"),
+                "prompt_revision": finding.get("prompt_revision"),
+                "review_audit_stage": audit.get("stage"),
+                "review_audit_prompt_revision": audit.get("prompt_revision"),
             }}
             self.send_json(200, {{"verified": True}})
             print(
@@ -794,7 +832,15 @@ ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
 
 
 def _load_source_review_api_key() -> str:
-    """Read the OpenRouter key from Secret Manager without printing it."""
+    """Read the OpenRouter key without printing it.
+
+    Prefer an already-materialized operator env (probe-only) so a Secret
+    Manager reauth failure cannot block a live rental. Fall back to GCP.
+    """
+    for name in ("SCREENER_SOURCE_REVIEW_API_KEY", "OPENROUTER_API_KEY"):
+        value = os.environ.get(name, "").strip()
+        if len(value) >= 16:
+            return value
     raw = subprocess.check_output(
         [
             "gcloud",
@@ -950,6 +996,22 @@ def command_source_review_probe(args: argparse.Namespace) -> int:
             },
             {"name": "SCREENER_STATIC_PREFLIGHT_V2_MODE", "value": "off"},
         ]
+        if live_model:
+            review_env.extend(
+                [
+                    {"name": "SCREENER_L2_REVIEW_MODE", "value": "enforce"},
+                    {"name": "SCREENER_L2_REVIEW_MODEL", "value": "moonshotai/kimi-k3"},
+                    {"name": "SCREENER_L3_REVIEW_ENABLED", "value": "true"},
+                    {"name": "SCREENER_L3_REVIEW_MODEL", "value": "openai/gpt-5.6-sol"},
+                    {"name": "SCREENER_L2_ALWAYS_ESCALATE", "value": "true"},
+                    {"name": "SCREENER_L2_TIMEOUT_SECONDS", "value": "900"},
+                    {"name": "SCREENER_L2_MAX_STEPS", "value": "18"},
+                    {
+                        "name": "SCREENER_L2_MAX_COMPLETION_TOKENS",
+                        "value": "8192",
+                    },
+                ]
+            )
         review = client.create_rental(
             name=f"ditto-source-probe-{secrets.token_hex(3)}",
             image=args.image,
@@ -980,16 +1042,19 @@ def command_source_review_probe(args: argparse.Namespace) -> int:
                 # receives the HTTP response and reaches its persistent hold
                 # before the DELETE-first cleanup.
                 time.sleep(5)
-                print(
-                    json.dumps(
-                        {
-                            "phase": "source-review",
-                            "capability": "AVAILABLE",
-                            "observation": json.loads(marker),
-                        },
-                        sort_keys=True,
+                payload = {
+                    "phase": "source-review",
+                    "capability": "AVAILABLE",
+                    "observation": json.loads(marker),
+                }
+                if live_model and review_uid is not None:
+                    payload["review_logs"] = _redact_provider_text(
+                        _safe_probe_output(
+                            _safe_logs(client, review_uid, tail=200),
+                            limit=4000,
+                        )
                     )
-                )
+                print(json.dumps(payload, sort_keys=True))
                 return 0
             review_state = _safe_state(client, review_uid)
             if review_state.get("status") == "error":
@@ -1084,6 +1149,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Live busybox build with production destination and tar inspect",
     )
+    kaniko.add_argument(
+        "--publish-ttl",
+        action="store_true",
+        help="Push the starter-kit image to ttl.sh so runtime-probe can boot it",
+    )
     kaniko.add_argument("--keep", action="store_true")
     kaniko.set_defaults(handler=command_kaniko_probe)
     agent = subparsers.add_parser("agent-probe")
@@ -1098,6 +1168,11 @@ def build_parser() -> argparse.ArgumentParser:
     runtime.add_argument("--resource", default="cpu-small")
     runtime.add_argument("--image", default="python:3.12-alpine")
     runtime.add_argument("--provision-timeout-seconds", type=float, default=600)
+    runtime.add_argument(
+        "--native-health",
+        action="store_true",
+        help="Boot the image entrypoint and accept any HTTP 200 from GET /health",
+    )
     runtime.add_argument("--keep", action="store_true")
     runtime.set_defaults(handler=command_runtime_probe)
     source_review = subparsers.add_parser("source-review-probe")

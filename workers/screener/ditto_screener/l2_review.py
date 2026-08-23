@@ -10,13 +10,14 @@ import json
 import logging
 import os
 import shutil
+import sys
 import tarfile
 import tempfile
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
-from typing import cast
+from typing import Protocol, cast
 from uuid import UUID
 
 import httpx
@@ -1268,6 +1269,19 @@ def _finalize_without_l3(
     )
 
 
+class AnalyzerHarness(Protocol):
+    """Allowlisted source-navigation tools used by L2/L3."""
+
+    async def run(
+        self,
+        workspace: Path,
+        command: str,
+        arguments: Mapping[str, object],
+        *,
+        deadline: float | None = None,
+    ) -> str: ...
+
+
 class IsolatedCodingHarness:
     """Run only repository-owned analyzers inside a disposable Docker sandbox."""
 
@@ -1380,6 +1394,109 @@ class IsolatedCodingHarness:
         return stdout.decode("utf-8")
 
 
+def _analyzer_script() -> Path:
+    bundled = Path(__file__).resolve().parent.parent / "tools" / "l2_analyzer.py"
+    if bundled.is_file():
+        return bundled
+    opt = Path("/opt/l2_analyzer.py")
+    if opt.is_file():
+        return opt
+    raise FileNotFoundError("L2 analyzer script is missing")
+
+
+class InProcessAnalyzerHarness:
+    """Run the allowlisted analyzer inside this already-isolated rental.
+
+    Targon and Cloud Run source-review jobs have no Docker socket. The rental
+    itself is the sandbox, so GCE nested-Docker is not required.
+    """
+
+    _COMMANDS = frozenset(
+        {
+            "workspace_index",
+            "read_file",
+            "search",
+            "rust_structure",
+            "call_graph",
+            "starter_diff",
+            "starter_function_diff",
+            "build_structure",
+            "integrity_surfaces",
+            "scorer_field_flow",
+        }
+    )
+
+    def __init__(
+        self,
+        *,
+        python_bin: str | None = None,
+        timeout_seconds: float = 30.0,
+    ) -> None:
+        self._python_bin = python_bin or sys.executable
+        self._timeout_seconds = timeout_seconds
+        self._script = _analyzer_script()
+        self._manifests = Path(__file__).resolve().parent / "data"
+
+    async def run(
+        self,
+        workspace: Path,
+        command: str,
+        arguments: Mapping[str, object],
+        *,
+        deadline: float | None = None,
+    ) -> str:
+        if command not in self._COMMANDS:
+            raise ValueError("L2 requested a non-allowlisted analyzer")
+        timeout = self._timeout_seconds
+        if deadline is not None:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise ValueError("L2 analyzer exceeded lease budget")
+            timeout = min(timeout, remaining)
+        proc = await asyncio.create_subprocess_exec(
+            self._python_bin,
+            str(self._script),
+            command,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env={
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+                "L2_ANALYZER_ROOT": str(workspace.resolve()),
+                "L2_ANALYZER_MANIFESTS": str(self._manifests),
+            },
+        )
+        encoded = json.dumps(arguments, sort_keys=True, separators=(",", ":")).encode()
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(encoded), timeout=timeout
+            )
+        except asyncio.CancelledError:
+            proc.kill()
+            with contextlib.suppress(Exception):
+                await proc.wait()
+            raise
+        except TimeoutError:
+            proc.kill()
+            with contextlib.suppress(Exception):
+                await proc.wait()
+            raise ValueError("L2 analyzer timed out") from None
+        if len(stdout) > _MAX_TOOL_BYTES or len(stderr) > 4_096:
+            raise ValueError("L2 analyzer exceeded output budget")
+        if proc.returncode == 2:
+            decoded = stdout.decode("utf-8")
+            try:
+                failure = json.loads(decoded)
+            except json.JSONDecodeError:
+                failure = None
+            if isinstance(failure, dict) and isinstance(failure.get("error"), str):
+                return decoded
+        if proc.returncode != 0:
+            raise ValueError(f"L2 analyzer exited with code {proc.returncode}")
+        return stdout.decode("utf-8")
+
+
 class L2AuditJournal:
     """Private, mode-0600, retention-bounded provenance without transcripts."""
 
@@ -1433,7 +1550,7 @@ class KimiSolSourceReviewAgent:
         *,
         api_key_file: str | None,
         base_url: str,
-        harness: IsolatedCodingHarness,
+        harness: AnalyzerHarness,
         cache_dir: str,
         audit_journal: L2AuditJournal,
         timeout_seconds: float,
@@ -2450,9 +2567,8 @@ class KimiSolSourceReviewAgent:
         claimed_safe = (
             adjudicator.observation.ok and adjudicator.observation.risk_level == "low"
         )
-        adjudicated_safe = claimed_safe and _qualifies_safety_clearance(
-            safety_evidence, adjudicator
-        )
+        clearance_gaps = _safety_clearance_gaps(safety_evidence, adjudicator)
+        adjudicated_safe = claimed_safe and not clearance_gaps
         adjudicated_analyzed = _merge_digest_items(
             analyst.analyzed_files,
             critic.analyzed_files,
@@ -2521,6 +2637,9 @@ class KimiSolSourceReviewAgent:
                 critic_cache_hit=critic_cache_hit,
             )
         if claimed_safe and not adjudicated_safe:
+            gap_text = ",".join(clearance_gaps) or "unknown"
+            logger.warning("L3 clearance certificate failed: %s", gap_text)
+            print(f"L3_CLEARANCE_GAPS={gap_text}", flush=True)
             return L2RunResult(
                 observation=_failure(
                     "l3-adjudicator-clearance-certificate", "retryable_infra"
@@ -2554,7 +2673,11 @@ class KimiSolSourceReviewAgent:
                 critic_cache_hit=critic_cache_hit,
             )
         return L2RunResult(
-            observation=adjudicator.observation,
+            observation=(
+                replace(adjudicator.observation, clearance_certified=True)
+                if adjudicated_safe
+                else adjudicator.observation
+            ),
             analyzed_files=adjudicated_analyzed,
             causal_path=adjudicator.causal_path,
             tools=dossier_tools + analyst.tools + critic.tools + adjudicator.tools,
@@ -2793,12 +2916,18 @@ class KimiSolSourceReviewAgent:
                 provider=provider,
                 deadline=deadline,
             )
+            payload: object | None = None
             try:
                 payload = response.json()
                 output, turn_usage, response_model, response_provider = (
                     _response_output_and_usage(payload)
                 )
             except ValueError as error:
+                logger.warning(
+                    "L2/L3 response contract failed: %s%s",
+                    error,
+                    _response_contract_detail(payload),
+                )
                 raise failure("model-response-contract") from error
             usage = _add_usage(usage, turn_usage)
             combined = _add_usage(usage_before, usage)
@@ -3063,6 +3192,19 @@ class KimiSolSourceReviewAgent:
                 )
                 if response.status_code != 429 and response.status_code < 500:
                     response.raise_for_status()
+                    payload: object | None = None
+                    with contextlib.suppress(ValueError, TypeError):
+                        payload = response.json()
+                    incomplete = (
+                        isinstance(payload, dict)
+                        and payload.get("status") == "incomplete"
+                    )
+                    if incomplete and attempt < len(_RETRY_DELAYS_SECONDS):
+                        delay = _RETRY_DELAYS_SECONDS[attempt]
+                        remaining = self._turn_timeout(deadline)
+                        if remaining > delay:
+                            await asyncio.sleep(delay)
+                            continue
                     return response
                 response.raise_for_status()
             except (httpx.TransportError, httpx.HTTPStatusError) as error:
@@ -3235,6 +3377,7 @@ class KimiSolSourceReviewAgent:
                 "error_code": result.observation.error_code,
                 "finding": result.observation.finding,
                 "failure_disposition": result.observation.failure_disposition,
+                "clearance_certified": result.observation.clearance_certified,
                 "review_audit": result.observation.review_audit,
             },
             "analyzed_files": list(result.analyzed_files),
@@ -3424,8 +3567,13 @@ class LayeredSourceReviewAgent:
     ) -> SourceReviewObservation:
         """Resolve a precomputed, artifact-bound L1 lead without rerunning L1."""
         l1 = l1_observation
-        should_escalate = l1.risk_level in {"medium", "high"} or (
-            l1.risk_level == "low" and not l1.clearance_certified
+        always_escalate = os.environ.get(
+            "SCREENER_L2_ALWAYS_ESCALATE", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        should_escalate = (
+            always_escalate
+            or l1.risk_level in {"medium", "high"}
+            or (l1.risk_level == "low" and not l1.clearance_certified)
         )
         if self._mode == "off" or not l1.ok or not should_escalate:
             if progress is not None:
@@ -3525,39 +3673,59 @@ def _qualifies_safety_clearance(
     evidence_observation: SourceReviewObservation, adjudicator: L2RunResult
 ) -> bool:
     """Require a deterministic certificate before any final safety clearance."""
+    return not _safety_clearance_gaps(evidence_observation, adjudicator)
+
+
+def _safety_clearance_gaps(
+    evidence_observation: SourceReviewObservation, adjudicator: L2RunResult
+) -> tuple[str, ...]:
+    """Name every mechanical certificate miss. Empty means the clearance holds."""
     finding = adjudicator.observation.finding
     evidence_paths = {str(item["path"]) for item in _l1_evidence(evidence_observation)}
     analyzed_paths = {str(item.get("path")) for item in adjudicator.analyzed_files}
-    if (
-        not evidence_paths
-        or not evidence_paths <= analyzed_paths
-        or not adjudicator.observation.ok
-        or adjudicator.observation.risk_level != "low"
-        or adjudicator.observation.categories != ("none",)
-        or adjudicator.resolution_basis not in _SAFE_RESOLUTION_BASES
-        or not adjudicator.dossier_complete
-        or not adjudicator.tools
-        or not adjudicator.response_models
-        or any(
-            model != L3_MODEL and not model.startswith(f"{L3_MODEL}-")
-            for model in adjudicator.response_models
+    gaps: list[str] = []
+    unread = sorted(evidence_paths - analyzed_paths)
+    if unread:
+        gaps.append("unread-l1-paths:" + "+".join(unread[:8]))
+    if not adjudicator.observation.ok:
+        gaps.append("observation-not-ok")
+    if adjudicator.observation.risk_level != "low":
+        gaps.append(f"risk:{adjudicator.observation.risk_level}")
+    if adjudicator.observation.categories != ("none",):
+        gaps.append(
+            "categories:" + ("+".join(adjudicator.observation.categories) or "empty")
         )
-        or not isinstance(finding, Mapping)
-        or _finding_confidence(finding) < _CHALLENGE_OVERTURN_CONFIDENCE
-        or finding.get("evidence") != []
-    ):
-        return False
+    if adjudicator.resolution_basis not in _SAFE_RESOLUTION_BASES:
+        gaps.append(f"basis:{adjudicator.resolution_basis}")
+    if not adjudicator.dossier_complete:
+        gaps.append("dossier-incomplete")
+    if not adjudicator.tools:
+        gaps.append("no-tools")
+    if not adjudicator.response_models:
+        gaps.append("no-models")
+    unexpected = [
+        model
+        for model in adjudicator.response_models
+        if model != L3_MODEL and not model.startswith(f"{L3_MODEL}-")
+    ]
+    if unexpected:
+        gaps.append("models:" + "+".join(unexpected[:4]))
+    if not isinstance(finding, Mapping):
+        gaps.append("no-finding")
+    else:
+        confidence = _finding_confidence(finding)
+        if confidence < _CHALLENGE_OVERTURN_CONFIDENCE:
+            gaps.append(f"confidence:{confidence}")
+        if finding.get("evidence") != []:
+            gaps.append("leftover-evidence")
     roles = {str(item.get("role")) for item in adjudicator.causal_path}
-    return (
-        len(adjudicator.causal_path) >= 4
-        and {
-            "context",
-            "decision",
-            "effect",
-            "sink",
-        }
-        <= roles
-    )
+    required_roles = {"context", "decision", "effect", "sink"}
+    missing_roles = sorted(required_roles - roles)
+    if len(adjudicator.causal_path) < 4:
+        gaps.append(f"causal-len:{len(adjudicator.causal_path)}")
+    if missing_roles:
+        gaps.append("missing-roles:" + "+".join(missing_roles))
+    return tuple(gaps)
 
 
 def _has_mixed_causal_families(
@@ -3797,6 +3965,13 @@ def _parse_l2_review(
             raise ValueError("L2 safe result contains contradictory evidence")
         if resolution_basis not in _SAFE_RESOLUTION_BASES:
             raise ValueError("L2 safe result has a non-safe resolution basis")
+        if prompt_revision == L2_SAFETY_PROMPT_REVISION:
+            roles = {str(item.get("role")) for item in normalized_causal}
+            required = {"context", "decision", "effect", "sink"}
+            if float(confidence) < _CHALLENGE_OVERTURN_CONFIDENCE:
+                raise ValueError("L2 safety clearance confidence is below 1.0")
+            if len(normalized_causal) < 4 or not required <= roles:
+                raise ValueError("L2 safety clearance lacks a refutation causal path")
     elif disposition == "violation":
         if risk not in {"medium", "high"} or category_set == {"none"}:
             raise ValueError("L2 violation is not elevated")
@@ -4010,19 +4185,57 @@ def _valid_location(repository: TarSourceRepository, path: str, line: int) -> bo
     return total is None or line <= max(total, 1)
 
 
+def _response_contract_detail(payload: object) -> str:
+    if not isinstance(payload, dict):
+        return f" type={type(payload).__name__}"
+    incomplete = payload.get("incomplete_details")
+    reason = ""
+    if isinstance(incomplete, Mapping):
+        reason = str(incomplete.get("reason") or "")
+    error = payload.get("error")
+    error_code = ""
+    if isinstance(error, Mapping):
+        error_code = str(
+            error.get("code") or error.get("type") or error.get("error_type") or ""
+        )
+    return (
+        f" status={payload.get('status')!r}"
+        f" error_type={payload.get('error_type')!r}"
+        f" error={error_code!r}"
+        f" incomplete={reason!r}"
+        f" output={type(payload.get('output')).__name__}"
+        f" usage={type(payload.get('usage')).__name__}"
+    )
+
+
 def _response_output_and_usage(
     payload: object,
 ) -> tuple[list[dict[str, object]], L2Usage, str | None, str | None]:
     if not isinstance(payload, dict):
         raise ValueError("L2 response is not an object")
+    error = payload.get("error")
+    if isinstance(error, Mapping):
+        code = error.get("code") or error.get("type") or error.get("error_type")
+        raise ValueError(f"L2 model error:{code or 'unknown'}")
+    if error:
+        raise ValueError(f"L2 model error:{payload.get('error_type') or 'unknown'}")
+    status = payload.get("status")
+    if status in {"failed", "cancelled", "incomplete"}:
+        details = payload.get("incomplete_details")
+        reason = "none"
+        if isinstance(details, Mapping) and details.get("reason"):
+            reason = str(details.get("reason"))
+        elif payload.get("error_type"):
+            reason = str(payload.get("error_type"))
+        raise ValueError(f"L2 model status:{status}:{reason}")
     output = payload.get("output")
     usage = payload.get("usage")
-    if (
-        not isinstance(output, list)
-        or any(not isinstance(item, dict) for item in output)
-        or not isinstance(usage, dict)
-    ):
-        raise ValueError("L2 response lacks output or usage")
+    if not isinstance(output, list):
+        raise ValueError(f"L2 response output type:{type(output).__name__}")
+    if any(not isinstance(item, dict) for item in output):
+        raise ValueError("L2 response output item is not an object")
+    if not isinstance(usage, dict):
+        raise ValueError(f"L2 response usage type:{type(usage).__name__}")
     input_tokens = usage.get("input_tokens")
     output_tokens = usage.get("output_tokens")
     if (
@@ -4494,6 +4707,9 @@ _L2_FAILURE_CODES: Mapping[str, str] = {
     "L2 response cost is invalid": "model-response-invalid",
     "L2 response is not an object": "model-response-invalid",
     "L2 response lacks output or usage": "model-response-invalid",
+    "L2 response output item is not an object": "model-response-invalid",
+    "L2 safety clearance confidence is below 1.0": "inconsistent-verdict",
+    "L2 safety clearance lacks a refutation causal path": "inconsistent-verdict",
     "L2 response model is invalid": "model-response-invalid",
     "L2 response token details are invalid": "model-response-invalid",
     "L2 response usage detail is invalid": "model-response-invalid",
@@ -4798,6 +5014,8 @@ SolL2SourceReviewAgent = KimiSolSourceReviewAgent
 
 
 __all__ = [
+    "AnalyzerHarness",
+    "InProcessAnalyzerHarness",
     "IsolatedCodingHarness",
     "L2AuditJournal",
     "KimiSolSourceReviewAgent",
