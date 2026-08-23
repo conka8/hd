@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.106.5 (2026-08-23)
+
+### Bug Fixes
+
+- **bench**: Qualify shadow LongMem after observational ablation drop
+  ([#1110](https://github.com/ditto-assistant/ditto-subnet/pull/1110),
+  [`303883d`](https://github.com/ditto-assistant/ditto-subnet/commit/303883dfb7b52dcd910ff179860639718058b572))
+
+
 ## v0.106.4 (2026-08-22)
 
 ### Bug Fixes
