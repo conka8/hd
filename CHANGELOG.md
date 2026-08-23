@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.106.6 (2026-08-23)
+
+### Bug Fixes
+
+- **bench**: Keep LongMem mix after enforce ablation completion
+  ([#1113](https://github.com/ditto-assistant/ditto-subnet/pull/1113),
+  [`63c4779`](https://github.com/ditto-assistant/ditto-subnet/commit/63c4779a490deb30d56bf8243d4d4ea14a576f35))
+
+
 ## v0.106.5 (2026-08-23)
 
 ### Bug Fixes
