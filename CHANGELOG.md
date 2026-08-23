@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v0.107.0 (2026-08-23)
+
+### Bug Fixes
+
+- **screener**: Screen starter-kit with Kaniko identity contract
+  ([#1069](https://github.com/ditto-assistant/ditto-subnet/pull/1069),
+  [`afd58d3`](https://github.com/ditto-assistant/ditto-subnet/commit/afd58d379756475cb3b21aecd2f3a15d6a5d30e7))
+
+- **screener**: Start capacity controller on drifted systemd units
+  ([#1114](https://github.com/ditto-assistant/ditto-subnet/pull/1114),
+  [`c04cb23`](https://github.com/ditto-assistant/ditto-subnet/commit/c04cb23d4808156d4e0d01bf7931b3ea21f279f7))
+
+### Features
+
+- **screener**: Run L1 L2 L3 in one Targon rental
+  ([#1090](https://github.com/ditto-assistant/ditto-subnet/pull/1090),
+  [`46aa715`](https://github.com/ditto-assistant/ditto-subnet/commit/46aa715aaa5d0e8791a284adc0b3ac66c2576462))
+
+
 ## v0.106.6 (2026-08-23)
 
 ### Bug Fixes
