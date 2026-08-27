@@ -6,6 +6,8 @@
 //! - [`datagen`]: deterministic-per-seed dataset generation.
 //! - [`eval`]: the shared tool+memory evaluation loop (CLI + playground).
 //! - [`grade`]: deterministic judge-free memory grading (no LLM).
+//! - [`graph`]: entity-graph retrieval by Personalized PageRank (HippoRAG-style).
+//! - [`lexical`]: exact-match / BM25 side-car index over the seeded haystack.
 //! - [`scorer`]: turns harness responses into a score report.
 //! - [`baseline`]: the optimizable agent (this is what you tune).
 //! - [`reranker`]: ONNX cross-encoder reranker (production retrieval stage).
@@ -17,6 +19,8 @@ pub mod catalog;
 pub mod datagen;
 pub mod eval;
 pub mod grade;
+pub mod graph;
+pub mod lexical;
 pub mod playground;
 pub mod protocol;
 pub mod reranker;

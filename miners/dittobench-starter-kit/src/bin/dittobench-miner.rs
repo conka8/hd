@@ -226,15 +226,16 @@ async fn run_handler(
     }
 }
 
-/// `POST /seed` — install a FRESH memory haystack into the harness Turso store
-/// before the validator asks memory questions. Loads the provided pairs +
-/// subjects + links via the same `save_memory` path as the bundled seed user
-/// (idempotent upserts). Returns the counts that were loaded.
+/// `POST /seed` — install a FRESH memory haystack before the validator asks
+/// memory questions. Loads the provided pairs + subjects + links into the
+/// Turso store via the same `save_memory` path as the bundled seed user, and
+/// into the lexical side-car, so both retrieval paths see the same haystack.
+/// Both are idempotent upserts, so staged waves merge. Returns the counts.
 async fn seed_handler(
     State(state): State<AppState>,
     Json(req): Json<dittobench_starter_kit::seed::SeedRequest>,
 ) -> impl IntoResponse {
-    match dittobench_starter_kit::seed::seed_from_request(state.baseline.store(), req).await {
+    match state.baseline.seed_haystack(req).await {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
