@@ -75,6 +75,13 @@ const STOP: &[&str] = &[
     "when", "where", "who", "whom", "which", "how", "why", "there", "here", "some", "any", "all",
 ];
 
+/// Shortest token allowed to link two rows.
+///
+/// Two characters, because names are the strongest links this corpus has and
+/// several of them are two characters long. Rarity does the filtering: a term
+/// is only followed when it appears in few enough rows to identify something.
+const MIN_LINK_TERM_CHARS: usize = 2;
+
 fn is_stop(tok: &str) -> bool {
     STOP.binary_search(&tok).is_ok() || STOP.contains(&tok)
 }
@@ -413,7 +420,15 @@ impl LexicalIndex {
         };
         let mut terms: Vec<(&String, &Vec<u32>)> = tokenize(query)
             .into_iter()
-            .filter(|t| t.len() >= 4 && !is_stop(t))
+            // Rarity, not length, decides whether a term identifies anything.
+            // A four-character floor was standing in for rarity and throwing
+            // away the most identifying tokens in the corpus: people are
+            // referred to by nicknames like "Red", "Em", "Mo", "Ace" and
+            // "Pip", and the row that binds a nickname to a person was
+            // reaching the model in almost no case as a result. The document
+            // frequency filter below is the real noise control, and a common
+            // short word cannot survive it.
+            .filter(|t| t.len() >= MIN_LINK_TERM_CHARS && !is_stop(t))
             .filter_map(|t| u.postings.get_key_value(&t))
             .filter(|(_, posting)| !posting.is_empty() && posting.len() <= max_df)
             .collect();
@@ -470,7 +485,7 @@ impl LexicalIndex {
         let mut considered: HashSet<String> = HashSet::new();
         for hit in seeds {
             for tok in tokenize(&hit.pair.text()) {
-                if tok.len() < 4 || is_stop(&tok) || known.contains(&tok) {
+                if tok.len() < MIN_LINK_TERM_CHARS || is_stop(&tok) || known.contains(&tok) {
                     continue;
                 }
                 if !considered.insert(tok.clone()) {

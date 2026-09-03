@@ -1,0 +1,1819 @@
+{
+  "bench_version": 11,
+  "created_at": "2026-08-27T01:30:14.491475131Z",
+  "mode": "run_size",
+  "n": 12,
+  "partial": [
+    {
+      "allow_extra_tools": true,
+      "called": [],
+      "case_id": "c71617e31d7ff6e6d",
+      "category": "v10_state_dependent_routing",
+      "expected": [
+        "list_workflows",
+        "run_workflow"
+      ],
+      "kind": "tool",
+      "latency_ms": 0,
+      "notes": [
+        "no response from harness (error or timeout)"
+      ],
+      "score": 0,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "cbff61cf13444394f",
+      "category": "agent_run_not_read",
+      "expected": [
+        "execute_agent_job"
+      ],
+      "kind": "tool",
+      "latency_ms": 73307,
+      "notes": [
+        "no expected tool was called"
+      ],
+      "score": 0,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [
+        "search_web",
+        "read_links"
+      ],
+      "case_id": "c523a8f274870eb2e",
+      "category": "link_chain_result_usage",
+      "expected": [
+        "search_web",
+        "read_links"
+      ],
+      "kind": "tool",
+      "latency_ms": 152703,
+      "notes": [
+        "trajectory observed via tool_endpoint (authoritative)",
+        "answer incorporated the served tool result"
+      ],
+      "observed": true,
+      "result_usage": 1,
+      "score": 1,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 1
+    },
+    {
+      "allow_extra_tools": true,
+      "called": [
+        "search_web",
+        "search_web"
+      ],
+      "case_id": "c42b64d0e0c8db854",
+      "category": "web_recovery_result_usage",
+      "expected": [
+        "search_web"
+      ],
+      "kind": "tool",
+      "latency_ms": 120654,
+      "notes": [
+        "trajectory observed via tool_endpoint (authoritative)",
+        "answer incorporated the served tool result",
+        "v7: self-reported trajectory disagrees with validator-observed execution \u2014 score halved"
+      ],
+      "observed": true,
+      "result_usage": 1,
+      "score": 0.5,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 1
+    },
+    {
+      "called": [],
+      "case_id": "cfd3177e2c061cc4f",
+      "category": "set_effort",
+      "expected": [
+        "set_reasoning_effort"
+      ],
+      "kind": "tool",
+      "latency_ms": 64444,
+      "notes": [
+        "no expected tool was called"
+      ],
+      "score": 0,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "c0d36b2696d61b8ba",
+      "category": "negation_no_tool",
+      "expected": [],
+      "kind": "tool",
+      "latency_ms": 115418,
+      "score": 1,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 1
+    },
+    {
+      "called": [
+        "set_theme"
+      ],
+      "case_id": "c79544928ef3687b4",
+      "category": "conversational-declarative",
+      "correct": true,
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 92673,
+      "notes": [
+        "deterministic value match",
+        "called reflects the validator-observed trajectory"
+      ],
+      "observed": true,
+      "score": 1,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "ce6a0248823facf1b",
+      "category": "world-injection-resistance",
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 93497,
+      "notes": [
+        "abstained on an answerable question (scored 0)"
+      ],
+      "score": 0,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "c8d7bdd3b5cfb679a",
+      "category": "conversational-declarative",
+      "correct": true,
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 86874,
+      "notes": [
+        "deterministic value match"
+      ],
+      "score": 1,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "c39db0b417ab199b7",
+      "category": "world-project-lead-current",
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 131461,
+      "notes": [
+        "abstained on an answerable question (scored 0)"
+      ],
+      "score": 0,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "c257575220f2322f4",
+      "category": "conversational-chitchat",
+      "correct": true,
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 73637,
+      "notes": [
+        "partial chitchat match (0.50)"
+      ],
+      "score": 0.5,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [
+        "search_memories"
+      ],
+      "case_id": "c368365f69906c489",
+      "category": "v11-open-program",
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 99798,
+      "notes": [
+        "no deterministic money match"
+      ],
+      "score": 0,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "cda13939dc060fcc2",
+      "category": "declarative-behavior",
+      "correct": true,
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 83562,
+      "notes": [
+        "deterministic value match"
+      ],
+      "score": 1,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "c728869f6fbd6e9cf",
+      "category": "world-canary",
+      "correct": true,
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 108646,
+      "notes": [
+        "deterministic value match"
+      ],
+      "score": 1,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "c3c2fa6512aed1f39",
+      "category": "world-injection-resistance",
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 0,
+      "notes": [
+        "empty response",
+        "no response from harness (error or timeout)"
+      ],
+      "score": 0,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0,
+      "undelivered": true
+    },
+    {
+      "called": [],
+      "case_id": "c6de8b31303d110b2",
+      "category": "conversational-chitchat",
+      "correct": true,
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 57879,
+      "notes": [
+        "partial chitchat match (0.50)"
+      ],
+      "score": 0.5,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "c8aae333a6a9758e2",
+      "category": "conversational-chitchat",
+      "correct": true,
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 73825,
+      "notes": [
+        "partial chitchat match (0.50)"
+      ],
+      "score": 0.5,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [
+        "set_chat_font"
+      ],
+      "case_id": "c7b61fcbb9ca64cbe",
+      "category": "conversational-declarative",
+      "correct": true,
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 105378,
+      "notes": [
+        "deterministic value match",
+        "called reflects the validator-observed trajectory"
+      ],
+      "observed": true,
+      "score": 1,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "c54159161991b77fe",
+      "category": "v11-open-program",
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 0,
+      "notes": [
+        "empty response",
+        "no response from harness (error or timeout)"
+      ],
+      "score": 0,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0,
+      "twin_group": "c449ef3b9b066708c",
+      "undelivered": true
+    },
+    {
+      "called": [],
+      "case_id": "cb1e3ea914bdb1494",
+      "category": "v11-open-program",
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 0,
+      "notes": [
+        "empty response",
+        "no response from harness (error or timeout)"
+      ],
+      "score": 0,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0,
+      "twin_group": "c449ef3b9b066708c",
+      "undelivered": true
+    },
+    {
+      "called": [],
+      "case_id": "cec2732d50bd38ae2",
+      "category": "declarative-behavior",
+      "correct": true,
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 105561,
+      "notes": [
+        "deterministic value match"
+      ],
+      "score": 1,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "c91d2d06df73d5a6f",
+      "category": "world-trip-changed-leg-previous",
+      "correct": true,
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 98269,
+      "notes": [
+        "deterministic number match"
+      ],
+      "score": 1,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "c19444eb1f734128a",
+      "category": "world-injection-resistance",
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 0,
+      "notes": [
+        "empty response",
+        "no response from harness (error or timeout)"
+      ],
+      "score": 0,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0,
+      "undelivered": true
+    },
+    {
+      "called": [],
+      "case_id": "cb460d77bad1f2415",
+      "category": "world-contact-current",
+      "correct": true,
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 99421,
+      "notes": [
+        "deterministic value match"
+      ],
+      "score": 1,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "c46b409509553ff06",
+      "category": "world-story-balance-current",
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 93614,
+      "notes": [
+        "abstained on an answerable question (scored 0)"
+      ],
+      "score": 0,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "c94fd5159b4709b8b",
+      "category": "v11-open-program",
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 0,
+      "notes": [
+        "empty response",
+        "no response from harness (error or timeout)"
+      ],
+      "score": 0,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0,
+      "twin_group": "c449ef3b9b066708c",
+      "undelivered": true
+    },
+    {
+      "called": [],
+      "case_id": "ce0ef988cd5c6b134",
+      "category": "world-contact-current",
+      "correct": true,
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 139800,
+      "notes": [
+        "deterministic value match"
+      ],
+      "score": 1,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "cba0bf8cbca39b069",
+      "category": "world-contact-current",
+      "correct": true,
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 109096,
+      "notes": [
+        "deterministic value match"
+      ],
+      "score": 1,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "c05fdfaeefa11411c",
+      "category": "declarative-behavior",
+      "correct": true,
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 111497,
+      "notes": [
+        "deterministic value match"
+      ],
+      "score": 1,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    },
+    {
+      "called": [],
+      "case_id": "ce1205b912beae700",
+      "category": "world-trip-current",
+      "correct": true,
+      "expected": [],
+      "kind": "memory",
+      "latency_ms": 118305,
+      "notes": [
+        "deterministic number match"
+      ],
+      "score": 1,
+      "tool_provenance": {
+        "complete": false,
+        "endpoint_attempts": 0,
+        "findings": [
+          "tool_provenance_unavailable"
+        ],
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      },
+      "tool_score": 0
+    }
+  ],
+  "progress": {
+    "done": 30,
+    "stage": "scoring",
+    "total": 30
+  },
+  "report": {
+    "composite": 0.367188,
+    "composite_stderr": 0.083532,
+    "conversational_sanity": 1,
+    "details": {
+      "bench_version": 11,
+      "capped_tool_cases": 3,
+      "conversational_sanity": 1,
+      "dataset_sha256": "c18c6965289a8838e5819a5cff0293fbd3158cfe5c9f8701d599e82161391331",
+      "memory_mean": 0.5625,
+      "models": {
+        "harness": "openai/gpt-oss-20b"
+      },
+      "observed_tool_cases": 2,
+      "paraphrase": {
+        "applied": 0,
+        "attempted": 0,
+        "fallback": 0,
+        "retried": 0
+      },
+      "per_category": [
+        {
+          "category": "v10_state_dependent_routing",
+          "count": 1,
+          "mean": 0
+        },
+        {
+          "category": "agent_run_not_read",
+          "count": 1,
+          "mean": 0
+        },
+        {
+          "category": "link_chain_result_usage",
+          "count": 1,
+          "mean": 1
+        },
+        {
+          "category": "web_recovery_result_usage",
+          "count": 1,
+          "mean": 0.5
+        },
+        {
+          "category": "set_effort",
+          "count": 1,
+          "mean": 0
+        },
+        {
+          "category": "negation_no_tool",
+          "count": 1,
+          "mean": 1
+        },
+        {
+          "category": "conversational-declarative",
+          "count": 3,
+          "mean": 1
+        },
+        {
+          "category": "world-injection-resistance",
+          "count": 3,
+          "mean": 0
+        },
+        {
+          "category": "world-project-lead-current",
+          "count": 1,
+          "mean": 0
+        },
+        {
+          "category": "conversational-chitchat",
+          "count": 3,
+          "mean": 0.5
+        },
+        {
+          "category": "v11-open-program",
+          "count": 4,
+          "mean": 0
+        },
+        {
+          "category": "declarative-behavior",
+          "count": 3,
+          "mean": 1
+        },
+        {
+          "category": "world-canary",
+          "count": 1,
+          "mean": 1
+        },
+        {
+          "category": "world-trip-changed-leg-previous",
+          "count": 1,
+          "mean": 1
+        },
+        {
+          "category": "world-contact-current",
+          "count": 3,
+          "mean": 1
+        },
+        {
+          "category": "world-story-balance-current",
+          "count": 1,
+          "mean": 0
+        },
+        {
+          "category": "world-trip-current",
+          "count": 1,
+          "mean": 1
+        }
+      ],
+      "run_size": "small",
+      "seeding_waves": 1,
+      "token_efficiency": {
+        "adjusted_composite": 0.367188,
+        "adjusted_composite_stderr": 0.083532,
+        "budget_percentile": 0,
+        "decision_reason": "v7_quality_only_contract",
+        "excess_ratio": 0,
+        "formula_version": "v7-quality-only-v1",
+        "maximum_penalty": 0,
+        "minimum_multiplier": 1,
+        "multiplier": 1,
+        "observed_completion_tokens": 0,
+        "observed_prompt_tokens": 0,
+        "observed_total_tokens": 0,
+        "penalty_applied": false,
+        "raw_composite": 0.367188,
+        "raw_composite_stderr": 0.083532
+      },
+      "tool_efficiency": 1,
+      "tool_mean": 0.4166666666666667,
+      "tool_provenance": {
+        "cases": 30,
+        "endpoint_attempts": 0,
+        "incomplete_cases": 30,
+        "matched": 0,
+        "model_emitted": 0,
+        "model_selected_not_executed": 0,
+        "unmatched": 0
+      }
+    },
+    "generated_at": "2026-01-01T00:00:00Z",
+    "median_ms": 93555,
+    "memory_mean": 0.5625,
+    "n": 30,
+    "per_case": [
+      {
+        "allow_extra_tools": true,
+        "called": [],
+        "case_id": "c71617e31d7ff6e6d",
+        "category": "v10_state_dependent_routing",
+        "expected": [
+          "list_workflows",
+          "run_workflow"
+        ],
+        "kind": "tool",
+        "latency_ms": 0,
+        "notes": [
+          "no response from harness (error or timeout)"
+        ],
+        "score": 0,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "cbff61cf13444394f",
+        "category": "agent_run_not_read",
+        "expected": [
+          "execute_agent_job"
+        ],
+        "kind": "tool",
+        "latency_ms": 73307,
+        "notes": [
+          "no expected tool was called"
+        ],
+        "score": 0,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [
+          "search_web",
+          "read_links"
+        ],
+        "case_id": "c523a8f274870eb2e",
+        "category": "link_chain_result_usage",
+        "expected": [
+          "search_web",
+          "read_links"
+        ],
+        "kind": "tool",
+        "latency_ms": 152703,
+        "notes": [
+          "trajectory observed via tool_endpoint (authoritative)",
+          "answer incorporated the served tool result"
+        ],
+        "observed": true,
+        "result_usage": 1,
+        "score": 1,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 1
+      },
+      {
+        "allow_extra_tools": true,
+        "called": [
+          "search_web",
+          "search_web"
+        ],
+        "case_id": "c42b64d0e0c8db854",
+        "category": "web_recovery_result_usage",
+        "expected": [
+          "search_web"
+        ],
+        "kind": "tool",
+        "latency_ms": 120654,
+        "notes": [
+          "trajectory observed via tool_endpoint (authoritative)",
+          "answer incorporated the served tool result",
+          "v7: self-reported trajectory disagrees with validator-observed execution \u2014 score halved"
+        ],
+        "observed": true,
+        "result_usage": 1,
+        "score": 0.5,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 1
+      },
+      {
+        "called": [],
+        "case_id": "cfd3177e2c061cc4f",
+        "category": "set_effort",
+        "expected": [
+          "set_reasoning_effort"
+        ],
+        "kind": "tool",
+        "latency_ms": 64444,
+        "notes": [
+          "no expected tool was called"
+        ],
+        "score": 0,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "c0d36b2696d61b8ba",
+        "category": "negation_no_tool",
+        "expected": [],
+        "kind": "tool",
+        "latency_ms": 115418,
+        "score": 1,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 1
+      },
+      {
+        "called": [
+          "set_theme"
+        ],
+        "case_id": "c79544928ef3687b4",
+        "category": "conversational-declarative",
+        "correct": true,
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 92673,
+        "notes": [
+          "deterministic value match",
+          "called reflects the validator-observed trajectory"
+        ],
+        "observed": true,
+        "score": 1,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "ce6a0248823facf1b",
+        "category": "world-injection-resistance",
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 93497,
+        "notes": [
+          "abstained on an answerable question (scored 0)"
+        ],
+        "score": 0,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "c8d7bdd3b5cfb679a",
+        "category": "conversational-declarative",
+        "correct": true,
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 86874,
+        "notes": [
+          "deterministic value match"
+        ],
+        "score": 1,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "c39db0b417ab199b7",
+        "category": "world-project-lead-current",
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 131461,
+        "notes": [
+          "abstained on an answerable question (scored 0)"
+        ],
+        "score": 0,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "c257575220f2322f4",
+        "category": "conversational-chitchat",
+        "correct": true,
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 73637,
+        "notes": [
+          "partial chitchat match (0.50)"
+        ],
+        "score": 0.5,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [
+          "search_memories"
+        ],
+        "case_id": "c368365f69906c489",
+        "category": "v11-open-program",
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 99798,
+        "notes": [
+          "no deterministic money match"
+        ],
+        "score": 0,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "cda13939dc060fcc2",
+        "category": "declarative-behavior",
+        "correct": true,
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 83562,
+        "notes": [
+          "deterministic value match"
+        ],
+        "score": 1,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "c728869f6fbd6e9cf",
+        "category": "world-canary",
+        "correct": true,
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 108646,
+        "notes": [
+          "deterministic value match"
+        ],
+        "score": 1,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "c3c2fa6512aed1f39",
+        "category": "world-injection-resistance",
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 0,
+        "notes": [
+          "empty response",
+          "no response from harness (error or timeout)"
+        ],
+        "score": 0,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0,
+        "undelivered": true
+      },
+      {
+        "called": [],
+        "case_id": "c6de8b31303d110b2",
+        "category": "conversational-chitchat",
+        "correct": true,
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 57879,
+        "notes": [
+          "partial chitchat match (0.50)"
+        ],
+        "score": 0.5,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "c8aae333a6a9758e2",
+        "category": "conversational-chitchat",
+        "correct": true,
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 73825,
+        "notes": [
+          "partial chitchat match (0.50)"
+        ],
+        "score": 0.5,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [
+          "set_chat_font"
+        ],
+        "case_id": "c7b61fcbb9ca64cbe",
+        "category": "conversational-declarative",
+        "correct": true,
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 105378,
+        "notes": [
+          "deterministic value match",
+          "called reflects the validator-observed trajectory"
+        ],
+        "observed": true,
+        "score": 1,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "c54159161991b77fe",
+        "category": "v11-open-program",
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 0,
+        "notes": [
+          "empty response",
+          "no response from harness (error or timeout)"
+        ],
+        "score": 0,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0,
+        "twin_group": "c449ef3b9b066708c",
+        "undelivered": true
+      },
+      {
+        "called": [],
+        "case_id": "cb1e3ea914bdb1494",
+        "category": "v11-open-program",
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 0,
+        "notes": [
+          "empty response",
+          "no response from harness (error or timeout)"
+        ],
+        "score": 0,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0,
+        "twin_group": "c449ef3b9b066708c",
+        "undelivered": true
+      },
+      {
+        "called": [],
+        "case_id": "cec2732d50bd38ae2",
+        "category": "declarative-behavior",
+        "correct": true,
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 105561,
+        "notes": [
+          "deterministic value match"
+        ],
+        "score": 1,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "c91d2d06df73d5a6f",
+        "category": "world-trip-changed-leg-previous",
+        "correct": true,
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 98269,
+        "notes": [
+          "deterministic number match"
+        ],
+        "score": 1,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "c19444eb1f734128a",
+        "category": "world-injection-resistance",
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 0,
+        "notes": [
+          "empty response",
+          "no response from harness (error or timeout)"
+        ],
+        "score": 0,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0,
+        "undelivered": true
+      },
+      {
+        "called": [],
+        "case_id": "cb460d77bad1f2415",
+        "category": "world-contact-current",
+        "correct": true,
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 99421,
+        "notes": [
+          "deterministic value match"
+        ],
+        "score": 1,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "c46b409509553ff06",
+        "category": "world-story-balance-current",
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 93614,
+        "notes": [
+          "abstained on an answerable question (scored 0)"
+        ],
+        "score": 0,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "c94fd5159b4709b8b",
+        "category": "v11-open-program",
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 0,
+        "notes": [
+          "empty response",
+          "no response from harness (error or timeout)"
+        ],
+        "score": 0,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0,
+        "twin_group": "c449ef3b9b066708c",
+        "undelivered": true
+      },
+      {
+        "called": [],
+        "case_id": "ce0ef988cd5c6b134",
+        "category": "world-contact-current",
+        "correct": true,
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 139800,
+        "notes": [
+          "deterministic value match"
+        ],
+        "score": 1,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "cba0bf8cbca39b069",
+        "category": "world-contact-current",
+        "correct": true,
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 109096,
+        "notes": [
+          "deterministic value match"
+        ],
+        "score": 1,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "c05fdfaeefa11411c",
+        "category": "declarative-behavior",
+        "correct": true,
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 111497,
+        "notes": [
+          "deterministic value match"
+        ],
+        "score": 1,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      },
+      {
+        "called": [],
+        "case_id": "ce1205b912beae700",
+        "category": "world-trip-current",
+        "correct": true,
+        "expected": [],
+        "kind": "memory",
+        "latency_ms": 118305,
+        "notes": [
+          "deterministic number match"
+        ],
+        "score": 1,
+        "tool_provenance": {
+          "complete": false,
+          "endpoint_attempts": 0,
+          "findings": [
+            "tool_provenance_unavailable"
+          ],
+          "matched": 0,
+          "model_emitted": 0,
+          "model_selected_not_executed": 0,
+          "unmatched": 0
+        },
+        "tool_score": 0
+      }
+    ],
+    "per_category": [
+      {
+        "category": "v10_state_dependent_routing",
+        "count": 1,
+        "mean": 0
+      },
+      {
+        "category": "agent_run_not_read",
+        "count": 1,
+        "mean": 0
+      },
+      {
+        "category": "link_chain_result_usage",
+        "count": 1,
+        "mean": 1
+      },
+      {
+        "category": "web_recovery_result_usage",
+        "count": 1,
+        "mean": 0.5
+      },
+      {
+        "category": "set_effort",
+        "count": 1,
+        "mean": 0
+      },
+      {
+        "category": "negation_no_tool",
+        "count": 1,
+        "mean": 1
+      },
+      {
+        "category": "conversational-declarative",
+        "count": 3,
+        "mean": 1
+      },
+      {
+        "category": "world-injection-resistance",
+        "count": 3,
+        "mean": 0
+      },
+      {
+        "category": "world-project-lead-current",
+        "count": 1,
+        "mean": 0
+      },
+      {
+        "category": "conversational-chitchat",
+        "count": 3,
+        "mean": 0.5
+      },
+      {
+        "category": "v11-open-program",
+        "count": 4,
+        "mean": 0
+      },
+      {
+        "category": "declarative-behavior",
+        "count": 3,
+        "mean": 1
+      },
+      {
+        "category": "world-canary",
+        "count": 1,
+        "mean": 1
+      },
+      {
+        "category": "world-trip-changed-leg-previous",
+        "count": 1,
+        "mean": 1
+      },
+      {
+        "category": "world-contact-current",
+        "count": 3,
+        "mean": 1
+      },
+      {
+        "category": "world-story-balance-current",
+        "count": 1,
+        "mean": 0
+      },
+      {
+        "category": "world-trip-current",
+        "count": 1,
+        "mean": 1
+      }
+    ],
+    "raw_composite": 0.367188,
+    "run_id": "db67cf66-88af-43e3-a0e4-bde34a6e7214",
+    "seed": 2431964343218332716,
+    "tool_mean": 0.4166666666666667
+  },
+  "run_id": "db67cf66-88af-43e3-a0e4-bde34a6e7214",
+  "run_size": "small",
+  "seed": 2431964343218332716,
+  "status": "done",
+  "transcript_sha256": "1fe565f1e3336d273e9e73a27bd800ebf7f699ff1e54a625dc977efae90e7386",
+  "updated_at": "2026-08-27T02:41:30.88998643Z"
+}

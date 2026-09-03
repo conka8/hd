@@ -9,6 +9,10 @@ license = "MIT"
 name = "dittobench-miner"
 path = "src/bin/dittobench-miner.rs"
 
+[features]
+# Offline execution tracing. Adds events only; see src/trace.rs.
+analysis_trace = []
+
 [dependencies]
 # The Ditto agent + memory harness (public git dep), pinned to a known-good
 # ditto-harness commit for reproducible builds. Bump `rev` deliberately: set it

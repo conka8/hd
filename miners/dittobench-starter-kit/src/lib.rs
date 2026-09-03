@@ -16,6 +16,8 @@
 
 pub mod baseline;
 pub mod catalog;
+pub mod commitment;
+pub mod control;
 pub mod datagen;
 pub mod eval;
 pub mod grade;
@@ -23,6 +25,8 @@ pub mod graph;
 pub mod lexical;
 pub mod playground;
 pub mod protocol;
+pub mod quantity;
 pub mod reranker;
 pub mod scorer;
 pub mod seed;
+pub mod trace;

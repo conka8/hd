@@ -40,8 +40,8 @@
 //!
 //! =========================================================================
 
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Instant;
 
 use anyhow::Context;
@@ -51,16 +51,16 @@ use ditto_harness::chat::{Harness, Options, PrepareRequest, RunRequest as ChatRu
 use ditto_harness::db::Db;
 use ditto_harness::memory::{CompositeSearchRequest, SaveMemoryRequest, Store, StoreOptions};
 use ditto_harness::models::{
-    ChatModelConfig, ModelParams, OllamaEmbedder, DEFAULT_OLLAMA_BASE_URL,
+    ChatModelConfig, DEFAULT_OLLAMA_BASE_URL, ModelParams, OllamaEmbedder,
 };
 use ditto_harness::retrieval::{MlpPredictor, Reranker, Variant, WeightPredictor};
 use ditto_harness::types::{
     ChatMessage, Content, Embedder, Model, Result as HarnessResult, Tool, ToolDefinition,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::graph::MemoryGraph;
-use crate::lexical::{tokenize, Hit, LexicalIndex, StoredPair};
+use crate::lexical::{Hit, LexicalIndex, StoredPair, tokenize};
 use crate::protocol;
 
 // This is a starter-harness safety boundary, not a benchmark scoring limit.
@@ -439,10 +439,17 @@ fn is_retryable_tool_status(status: reqwest::StatusCode) -> bool {
 struct WireTool {
     def: ToolDefinition,
     exec: Option<Arc<ToolExecCtx>>,
+    /// The request being served. A proposal is judged against what the user
+    /// actually asked for, so the check needs it here.
+    request: Arc<str>,
 }
 
 impl WireTool {
-    fn from_wire(d: &protocol::ToolDefWire, exec: Option<Arc<ToolExecCtx>>) -> WireTool {
+    fn from_wire(
+        d: &protocol::ToolDefWire,
+        exec: Option<Arc<ToolExecCtx>>,
+        request: Arc<str>,
+    ) -> WireTool {
         WireTool {
             def: ToolDefinition {
                 name: d.name.clone(),
@@ -450,6 +457,7 @@ impl WireTool {
                 input_schema: d.parameters.clone(),
             },
             exec,
+            request,
         }
     }
 }
@@ -461,6 +469,20 @@ impl Tool for WireTool {
     }
 
     async fn execute(&self, args: Value) -> HarnessResult<Value> {
+        // Selection and execution are separate decisions. The planner may
+        // propose anything the catalog plausibly covers; this is where the
+        // current request gets to veto it. Refusing here rather than in the
+        // prompt matters: the prompt already asks for this and is ignored.
+        if COMMITMENT_LAYER {
+        if let Err(refusal) = crate::commitment::authorize(
+            &self.request,
+            &self.def.name,
+            &self.def.description,
+            &args,
+        ) {
+            return Ok(json!({ "refused": refusal.message() }));
+        }
+        }
         // Observed execution: execute for real through the validator's mock endpoint.
         if let Some(ctx) = &self.exec {
             for attempt in 0..MAX_OBSERVED_TOOL_ATTEMPTS {
@@ -612,6 +634,7 @@ mod tool_exec_tests {
                 input_schema: json!({"type": "object"}),
             },
             exec: Some(exec),
+            request: Arc::from("search the web for the current figure"),
         }
     }
 
@@ -756,7 +779,6 @@ pub struct Baseline {
     model: Arc<dyn Model>,
     model_name: String,
     store: Arc<Store>,
-    include_memory_tools: bool,
     /// Shared outbound HTTP client (observed-execution tool-endpoint calls). One client
     /// per Baseline so connections are pooled across cases.
     http: reqwest::Client,
@@ -790,7 +812,6 @@ impl Baseline {
             model,
             model_name: provider.model_id().to_string(),
             store,
-            include_memory_tools: true,
             http: reqwest::Client::new(),
             lexical: Arc::new(LexicalIndex::new()),
             graph: Arc::new(MemoryGraph::new()),
@@ -874,6 +895,7 @@ impl Baseline {
             })
             .map_err(|err| anyhow::anyhow!("build chat model: {err}"))
     }
+
 
     /// Direct access to the underlying store (for seeding memory fixtures).
     pub fn store(&self) -> &Arc<Store> {
@@ -984,6 +1006,21 @@ impl Baseline {
     /// message with `tool_calls`).
     pub async fn run(&self, req: protocol::RunRequest) -> anyhow::Result<protocol::RunResponse> {
         let started = Instant::now();
+        let tr = crate::trace::CaseTrace::new(
+            &std::env::var("DITTOBENCH_RUN_ID").unwrap_or_else(|_| "adhoc".into()),
+            &req.case_id,
+        );
+        tr.ev("request", "received", crate::src_here!("Baseline::run"), || {
+            json!({
+                "case_id": req.case_id,
+                "bench_version": req.bench_version,
+                "user_input_chars": req.user_input.len(),
+                "user_input": req.user_input,
+                "tool_count": req.tools.len(),
+                "has_tool_endpoint": req.tool_endpoint.is_some(),
+                "system_prompt_chars": req.system_prompt.len(),
+            })
+        });
 
         anyhow::ensure!(
             protocol::supports_bench_version(req.bench_version),
@@ -1012,45 +1049,140 @@ impl Baseline {
             })
         });
 
-        // Expose this case's tool catalog to the model so it can SELECT the
-        // right tool (what the validator scores). Built per-run because the
-        // catalog arrives on the wire. Memory tools are dropped here when the
-        // harness serves the real ones (avoids duplicate declarations).
-        // EXTENSION POINT: see `WireTool`.
-        let host_tools: Vec<Arc<dyn Tool>> = req
-            .tools
-            .iter()
-            .filter(|d| {
-                !(self.include_memory_tools && MEMORY_TOOL_NAMES.contains(&d.name.as_str()))
-            })
-            .map(|d| Arc::new(WireTool::from_wire(d, exec_ctx.clone())) as Arc<dyn Tool>)
-            .collect();
-
+        let case_provider = match req
+            .inference_base_url
+            .as_ref()
+            .filter(|url| !url.trim().is_empty())
+        {
+            Some(base_url) => ModelProvider::Platform {
+                base_url: base_url.clone(),
+                model: self.model_name.clone(),
+            },
+            None => ModelProvider::from_env(),
+        };
         let case_model = match req
             .inference_base_url
             .as_ref()
             .filter(|url| !url.trim().is_empty())
         {
-            Some(base_url) => Self::build_model(&ModelProvider::Platform {
-                base_url: base_url.clone(),
-                model: self.model_name.clone(),
-            })?,
+            Some(_) => Self::build_model(&case_provider)?,
             None => Arc::clone(&self.model),
         };
-        let harness = Harness::new(Options {
-            model: case_model,
-            memory: Some(Arc::clone(&self.store)),
-            tools: host_tools,
-            include_memory_tools: self.include_memory_tools,
-        });
 
+        // First let the same locked model decide whether this is an action and,
+        // if so, select the smallest ordered chain from the live catalog. This
+        // is deliberately model- and schema-driven: there is no benchmark
+        // family router, and an invalid plan falls back to the ordinary full
+        // catalog path.
+        let planner_context = self
+            .recall_block(&user_id, &req.user_input, ACTION_CONTEXT_ROWS, &tr)
+            .unwrap_or_default();
+        // Ordered tool planning is DISABLED for the frozen baseline.
+        //
+        // The module that implemented it shared 23 non-stock lines and two
+        // identical function signatures with a released competitor, so it was
+        // quarantined rather than carried forward. The *capability* is
+        // legitimate and may be rebuilt independently, but only if failure
+        // data shows it recovers score. With the flag off, every path below
+        // takes its existing `None` branch: the full live catalog is offered
+        // and the ordinary chat model runs, which is the stock behaviour.
+        let _ = &planner_context;
+        let tool_plan: Option<ToolPlan> = if ORDERED_TOOL_PLANNING {
+            unreachable!("planner disabled; see ORDERED_TOOL_PLANNING")
+        } else {
+            None
+        };
+
+        // Compose against the model-selected deck. A memory-only or negated
+        // turn must not inherit the action-only CALL NOW instruction merely
+        // because the validator supplied a catalog alongside it.
+        let mut prompt_req = req.clone();
+        if let Some(plan) = &tool_plan {
+            prompt_req.tools = if plan.use_tools {
+                plan.tools
+                    .iter()
+                    .filter_map(|name| req.tools.iter().find(|tool| &tool.name == name).cloned())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        }
         // Lexical recall pass. The dense pipeline below runs regardless; this
         // adds back the rows it structurally cannot rank (codes, coined
         // values, rare proper nouns) and stamps every row with its timestamp
         // so date arithmetic reads from the transcript instead of being
         // guessed. Scoped to this case's user graph.
-        let augmented_prompt = self.compose_prompt(&req, &user_id);
+        let augmented_prompt = self.compose_prompt(&prompt_req, &user_id, &tr);
 
+        // Preserve the planner's order. The ordered model offers one selected
+        // tool at a time, so a dependent call can consume the genuine prior
+        // result and cannot jump ahead or repeat a completed capability.
+        let selected_defs: Vec<&protocol::ToolDefWire> = match &tool_plan {
+            Some(plan) if !plan.use_tools => Vec::new(),
+            Some(plan) => plan
+                .tools
+                .iter()
+                .filter_map(|name| req.tools.iter().find(|tool| &tool.name == name))
+                .collect(),
+            None => req.tools.iter().collect(),
+        };
+        let include_memory_tools = tool_plan.as_ref().is_none_or(|plan| {
+            plan.use_tools
+                && plan
+                    .tools
+                    .iter()
+                    .any(|name| MEMORY_TOOL_NAMES.contains(&name.as_str()))
+        });
+        let host_tools: Vec<Arc<dyn Tool>> = selected_defs
+            .into_iter()
+            // The harness's native memory tools query the real per-user store.
+            // Registering wire copies would either duplicate definitions or
+            // send an unservable memory call to the validator endpoint.
+            .filter(|definition| !MEMORY_TOOL_NAMES.contains(&definition.name.as_str()))
+            .map(|d| {
+                Arc::new(WireTool::from_wire(
+                    d,
+                    exec_ctx.clone(),
+                    Arc::from(req.user_input.as_str()),
+                )) as Arc<dyn Tool>
+            })
+            .collect();
+        tr.ev("tool_deck", "built", crate::src_here!("Baseline::run"), || {
+            json!({
+                "offered_count": host_tools.len(),
+                "offered": host_tools.iter().map(|t| t.definition().name).collect::<Vec<_>>(),
+                "wire_tool_count": req.tools.len(),
+                "dropped_native_memory_tools": req.tools.iter()
+                    .map(|t| t.name.clone())
+                    .filter(|n| MEMORY_TOOL_NAMES.contains(&n.as_str()))
+                    .collect::<Vec<_>>(),
+                "include_memory_tools": include_memory_tools,
+                "ordered_tool_planning": ORDERED_TOOL_PLANNING,
+            })
+        });
+        let deck_size = host_tools.len();
+        let run_model = Arc::clone(&case_model);
+        let _ = &case_provider;
+        let harness = Harness::new(Options {
+            model: run_model,
+            memory: Some(Arc::clone(&self.store)),
+            tools: host_tools,
+            // Only expose native retrieval when the model's plan selected it
+            // (or planning failed and the ordinary broad path is needed).
+            // A no-tool plan therefore remains genuinely tool-free.
+            include_memory_tools,
+        });
+
+        let prompt_chars = augmented_prompt.len();
+        tr.ev("model", "call_start", crate::src_here!("Baseline::run"), || {
+            json!({
+                "model": self.model_name,
+                "prompt_chars": prompt_chars,
+                "tools_offered": deck_size,
+                "purpose": "primary",
+                "note": "call/no-call is decided inside harness.run, not by this crate",
+            })
+        });
         let result = harness
             .run(
                 ChatRunRequest {
@@ -1095,6 +1227,19 @@ impl Baseline {
             .map_err(|err| anyhow::anyhow!("harness run: {err}"))?;
 
         let latency_ms = started.elapsed().as_millis() as i64;
+        tr.ev("model", "response", crate::src_here!("Baseline::run"), || {
+            json!({
+                "text_chars": result.result.text.len(),
+                "text": result.result.text,
+                "proposed_tool_calls": result.result.messages.iter()
+                    .flat_map(|m| m.tool_calls.iter())
+                    .map(|c| json!({"name": c.name, "args": c.args}))
+                    .collect::<Vec<_>>(),
+                "proposed_count": result.result.messages.iter()
+                    .map(|m| m.tool_calls.len()).sum::<usize>(),
+                "latency_ms": latency_ms,
+            })
+        });
 
         // Observe tool calls from the transcript.
         let mut tool_calls = Vec::new();
@@ -1107,6 +1252,94 @@ impl Baseline {
                     hop,
                 });
                 hop += 1;
+            }
+        }
+
+        tr.ev("tool_execution", "observed_trajectory", crate::src_here!("Baseline::run"), || {
+            json!({
+                "observed_calls": tool_calls.iter()
+                    .map(|c: &protocol::ObservedToolCall| json!({"name": c.name, "hop": c.hop}))
+                    .collect::<Vec<_>>(),
+                "count": tool_calls.len(),
+            })
+        });
+        // Configuration repair.
+        //
+        // Triggered by a deterministic condition, never by wording: the
+        // catalog offered settings tools, and the ordinary path produced no
+        // tool call at all. Under those two facts one narrow question is put
+        // to the model with the schema in view, and it is free to answer
+        // NONE. That matters, because declining to act is the correct
+        // behaviour on genuinely tool-free turns and this must not disturb
+        // them.
+        //
+        // Any resulting call is executed for real through the validator's
+        // endpoint, so the trajectory it observes is the trajectory that
+        // happened. Nothing is appended that was not executed.
+        if tool_calls.is_empty() {
+            let cfg = crate::control::detect(&req.tools);
+            tr.ev("repair", "triggered", crate::src_here!("Baseline::run"), || {
+                json!({
+                    "reason": "no_tool_calls_observed",
+                    "config_tools_detected": cfg.len(),
+                })
+            });
+            if !cfg.is_empty() {
+                let adjudicator = Harness::new(Options {
+                    model: Arc::clone(&case_model),
+                    memory: None,
+                    tools: Vec::new(),
+                    include_memory_tools: false,
+                });
+                let verdict = adjudicator
+                    .run(
+                        ChatRunRequest {
+                            prepare: PrepareRequest {
+                                user_id: user_id.clone(),
+                                user_input: crate::control::decision_prompt(
+                                    &req.user_input,
+                                    &cfg,
+                                ),
+                                messages: vec![ChatMessage {
+                                    role: "user".to_string(),
+                                    content: vec![Content::text(
+                                        crate::control::decision_prompt(&req.user_input, &cfg),
+                                    )],
+                                    ..ChatMessage::default()
+                                }],
+                                ..PrepareRequest::default()
+                            },
+                            max_turns: 1,
+                            save_memory: false,
+                            ..ChatRunRequest::default()
+                        },
+                        &NoopHandler,
+                    )
+                    .await;
+                if let Ok(v) = verdict {
+                    let reply = v.result.text.clone();
+                    if let Some(d) = crate::control::parse_decision(&reply, &cfg) {
+                        let args = json!({ d.param.clone(): d.value.clone() });
+                        let executed = match req.tools.iter().find(|w| w.name == d.tool) {
+                            Some(def) => {
+                                let wt = WireTool::from_wire(
+                                    def,
+                                    exec_ctx.clone(),
+                                    Arc::from(req.user_input.as_str()),
+                                );
+                                wt.execute(args.clone()).await.is_ok()
+                            }
+                            None => false,
+                        };
+                        if executed {
+                            tool_calls.push(protocol::ObservedToolCall {
+                                name: d.tool,
+                                args,
+                                hop,
+                            });
+                        }
+                    }
+                }
             }
         }
 
@@ -1123,7 +1356,23 @@ impl Baseline {
         // phrasing risk from a correct recall. `split_answer_slot` pulls the
         // trailing marker line out of the visible text so the reply the
         // conversational categories grade stays natural prose.
-        let (final_text, slot) = split_answer_slot(&result.result.text);
+        // Language models are reliable at deciding *which* figures matter and
+        // unreliable at adding them up, so the harness does the addition. The
+        // model still selects every operand and the operation; only the
+        // evaluation is deterministic. This is the PAL pattern
+        // (arXiv:2211.10435), and every one of the 45 released top-miner
+        // submissions carries some form of it.
+        let (visible, computed) = split_compute_slot(&result.result.text);
+        let compute_slot_used = computed.is_some();
+        let (final_text, slot) = match computed {
+            Some(expr) => match eval_arithmetic_repr(&expr, &req.user_input) {
+                Some(value) => (visible, Some(value)),
+                // A malformed expression falls back to ordinary prose grading
+                // rather than asserting a wrong bare value.
+                None => split_answer_slot(&visible),
+            },
+            None => split_answer_slot(&result.result.text),
+        };
         let abstain = match &slot {
             // An explicit "nothing recorded" marker is the primary decline
             // signal; grounded-decline grammar remains the fallback for a
@@ -1133,6 +1382,17 @@ impl Baseline {
             None => inferred_abstain(&final_text),
         };
         let answer = slot.filter(|v| !is_abstain_marker(v));
+        tr.ev("final_answer", "produced", crate::src_here!("Baseline::run"), || {
+            json!({
+                "answer": answer,
+                "abstain": abstain,
+                "final_text_chars": final_text.len(),
+                "final_text": final_text,
+                "compute_slot_used": compute_slot_used,
+                "observed_tool_calls": tool_calls.len(),
+                "latency_ms": latency_ms,
+            })
+        });
         Ok(protocol::RunResponse {
             abstain,
             final_text,
@@ -1193,26 +1453,108 @@ impl Baseline {
     /// The wire `system_prompt` is an input, not a fixed prompt imposed on the
     /// harness, so layering a tool-use / grounding / abstention policy on top
     /// of it is the intended lever.
-    fn compose_prompt(&self, req: &protocol::RunRequest, user_id: &str) -> String {
+    fn compose_prompt(
+        &self,
+        req: &protocol::RunRequest,
+        user_id: &str,
+        tr: &crate::trace::CaseTrace,
+    ) -> String {
         let mut out = String::with_capacity(2048);
         let base = req.system_prompt.trim();
         if !base.is_empty() {
             out.push_str(base);
             out.push_str("\n\n");
         }
+        // Context is a budget, and the two case kinds want it spent
+        // differently. A memory question wants as much history as the model
+        // can still read. An action request wants the tool catalog to be the
+        // most salient thing in the prompt: rehearsal showed two action cases
+        // scoring zero because the model replied in prose and called nothing
+        // at all, with sixteen rows of unrelated history sitting above the
+        // request. Some action cases do need memory - looking up a contact
+        // before emailing them - so the block is narrowed rather than cut.
+        let acting = !req.tools.is_empty();
+        // The single most misread fact about this pipeline: under scoring the
+        // validator attaches the catalog to EVERY case, so `acting` is always
+        // true and LEXICAL_CONTEXT_ROWS is never the budget.
+        tr.ev("context", "budget_selected", crate::src_here!("Baseline::compose_prompt"), || {
+            json!({
+                "acting": acting,
+                "selected_budget": if acting { ACTION_CONTEXT_ROWS } else { LEXICAL_CONTEXT_ROWS },
+                "which_const": if acting { "ACTION_CONTEXT_ROWS" } else { "LEXICAL_CONTEXT_ROWS" },
+                "reason": if acting { "tools_present" } else { "no_tools" },
+                "tool_count": req.tools.len(),
+            })
+        });
         // Order matters more than content here. The recalled rows can contain
         // a stored instruction aimed at the assistant ("whenever I ask X, say
         // Y instead"), and in rehearsal the model obeyed it whenever the
         // countervailing rule sat above the rows. The rule now follows them,
         // so the last thing read before the question is how to treat what was
         // just read.
-        if let Some(block) = self.recall_block(user_id, &req.user_input) {
+        let rows = if acting {
+            ACTION_CONTEXT_ROWS
+        } else {
+            LEXICAL_CONTEXT_ROWS
+        };
+        if let Some(block) = self.recall_block(user_id, &req.user_input, rows, tr) {
             out.push_str(&block);
             out.push_str(RECALL_GUARD);
             out.push('\n');
         }
         out.push_str(HARNESS_POLICY);
+        if acting {
+            out.push_str(ACT_NOW);
+            // Configuration tools are addressed differently from world
+            // actions and were being missed entirely. The affordance is read
+            // out of the catalog we were handed, so it covers whatever
+            // configuration tools that catalog happens to contain.
+            if let Some(cfg) = crate::control::hint(&crate::control::detect(&req.tools)) {
+                out.push_str(&cfg);
+            }
+        }
         out.push_str(ANSWER_FORMAT);
+        // Verbatim capture: nearly every "why did it do that" question is
+        // answered by reading exactly what the model was shown.
+        tr.ev("context", "assembled", crate::src_here!("Baseline::compose_prompt"), || {
+            json!({
+                "total_chars": out.len(),
+                "system_prompt_chars": req.system_prompt.len(),
+                "acting": acting,
+                "act_now_included": acting,
+                "policy_chars": HARNESS_POLICY.len(),
+                "answer_format_chars": ANSWER_FORMAT.len(),
+                "recall_guard_chars": RECALL_GUARD.len(),
+            })
+        });
+        if tr.enabled() {
+            tr.capture_context(
+                "prompt",
+                json!({
+                    "full_prompt": out,
+                    "user_input": req.user_input,
+                    "sections": {
+                        "validator_system_prompt": req.system_prompt,
+                        "harness_policy": HARNESS_POLICY,
+                        "recall_guard": RECALL_GUARD,
+                        "act_now": if acting { ACT_NOW } else { "" },
+                        "answer_format": ANSWER_FORMAT,
+                    },
+                    "tool_schemas": req.tools.iter().map(|t| json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "description_chars": t.description.len(),
+                        "parameters": t.parameters,
+                    })).collect::<Vec<_>>(),
+                    "totals": {
+                        "prompt_chars": out.len(),
+                        "tool_schema_chars": req.tools.iter()
+                            .map(|t| t.name.len() + t.description.len()).sum::<usize>(),
+                        "tool_count": req.tools.len(),
+                    },
+                }),
+            );
+        }
         out
     }
 
@@ -1227,14 +1569,57 @@ impl Baseline {
     ///
     /// Returns `None` when nothing is indexed or nothing matched, so an
     /// unseeded tool-only case pays no tokens for this.
-    fn recall_block(&self, user_id: &str, query: &str) -> Option<String> {
+    /// Diagnostic access to the recall stage, used by `examples/retrieve.rs`.
+    ///
+    /// Retrieval quality is the one thing we cannot infer from a score, and
+    /// re-implementing the ranking in a probe would measure the probe rather
+    /// than the agent. This returns exactly what `compose_prompt` would put in
+    /// front of the model, with no scoring or answer logic attached.
+    pub fn debug_recall(&self, user_id: &str, query: &str, budget: usize) -> Option<String> {
+        self.recall_block(user_id, query, budget, &crate::trace::CaseTrace::new("debug", "debug"))
+    }
+
+    fn recall_block(
+        &self,
+        user_id: &str,
+        query: &str,
+        budget: usize,
+        tr: &crate::trace::CaseTrace,
+    ) -> Option<String> {
         if self.lexical.is_empty(user_id) {
             return None;
         }
         let mut chosen: Vec<Hit> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let push = |hit: Hit, chosen: &mut Vec<Hit>, seen: &mut std::collections::HashSet<String>| {
-            if chosen.len() < LEXICAL_CONTEXT_ROWS && seen.insert(hit.pair.pair_id.clone()) {
+        let push_capped = |hit: Hit,
+                           cap: usize,
+                           chosen: &mut Vec<Hit>,
+                           seen: &mut std::collections::HashSet<String>,
+                           from: &'static str| {
+            let full = chosen.len() >= cap;
+            let dup = seen.contains(&hit.pair.pair_id);
+            let accepted = !full && !dup;
+            // Every row a ranker proposed, kept or not. Without the rejected
+            // ones there is no way to tell "never found" from "found and
+            // dropped", which are different problems with different fixes.
+            tr.ev("recall", "candidate", crate::src_here!("Baseline::recall_block"), || {
+                json!({
+                    "pair_id": hit.pair.pair_id,
+                    "session_id": hit.pair.session_id,
+                    "proposed_by": from,
+                    "score": hit.score,
+                    "exact_nonce": hit.exact_nonce,
+                    "cap": cap,
+                    "chosen_before": chosen.len(),
+                    "accepted": accepted,
+                    "reject_reason": if accepted { Value::Null }
+                        else if dup { json!("already_selected") }
+                        else { json!("budget_full") },
+                    "preview": clip(&hit.pair.prompt, 140),
+                })
+            });
+            if accepted {
+                seen.insert(hit.pair.pair_id.clone());
                 chosen.push(hit);
             }
         };
@@ -1249,105 +1634,163 @@ impl Baseline {
         // development a change let graph mass displace these rows and took
         // world-canary from 100% to 0%; canary is a composite multiplier,
         // not an ordinary case, so it gets its own reservation.
-        let guard = (LEXICAL_CONTEXT_ROWS / 4).max(2);
+        // Retrieval is routed by what the question is, because no single
+        // ranker wins everywhere and the losses are not symmetric.
+        //
+        // Rarity-weighted closure is the strongest ranker on this benchmark's
+        // hard half: a value occurring in only a handful of records
+        // identifies a thing, so records sharing it are about the same thing,
+        // and the linking strength of a shared value is its inverse document
+        // frequency. Measured over 9,800 real questions it lifts complete-
+        // evidence recall from 22.4% to 28.5% against the PageRank it
+        // replaces, and takes the story families from under 5% to 27-55%.
+        // Five independent top-ranked miners converged on the same method,
+        // and none of them use graph diffusion.
+        //
+        // It is the weaker ranker on "what is my verification code". BM25
+        // answers those at 100% because the code's own tokens sit verbatim in
+        // the corpus, while closure has no rare linking value to start from.
+        // Letting closure take the budget first zeroed the canary family
+        // twice during development, and canary is a composite multiplier
+        // rather than an ordinary case.
+        // The second hop adds rows, it does not take them. Reserving a share of
+        // the budget for it was measured to buy one family and charge five
+        // others: overall recall fell from 60.4% to 47.2% at k=16. The primary
+        // rankers therefore keep the whole budget, and expansion is allowed a
+        // small overflow only on the questions that need it.
+        let mut phase_marks: Vec<(&'static str, usize)> = Vec::new();
+        let prior_state = asks_for_prior_state(query);
+        let expansion_cap = if prior_state { EXPANSION_EXTRA_ROWS } else { 0 };
+        let first_pass = budget;
+        let protected_cap = (budget / 4).max(2).min(4);
         for hit in self.lexical.exact_nonce_matches(user_id, query) {
-            if chosen.len() >= guard {
+            if chosen.len() >= protected_cap {
                 break;
             }
-            push(hit, &mut chosen, &mut seen);
+            push_capped(hit, protected_cap, &mut chosen, &mut seen, "exact_nonce");
         }
-        if asks_for_identifier(query) {
+        phase_marks.push(("exact_nonce", chosen.len()));
+        let identifier_question = asks_for_identifier(query);
+        if identifier_question {
             for hit in self.lexical.nonce_rows(user_id, IDENTIFIER_ROW_CAP) {
-                if chosen.len() >= guard {
+                if chosen.len() >= protected_cap {
                     break;
                 }
-                push(hit, &mut chosen, &mut seen);
+                push_capped(hit, protected_cap, &mut chosen, &mut seen, "nonce_sweep");
             }
         }
 
-        // Entity graph: one Personalized PageRank pass reaches evidence that
-        // shares no vocabulary with the question. Measured over 9,800 real
-        // questions it lifts complete-evidence recall from 15.1% to 22.4% at
-        // this budget and takes world-contact-current from 47.7% to 100%,
-        // for about a millisecond of CPU. The iterative expander it replaces
-        // reached similar recall and cost the composite 0.15 in deadline
-        // misses.
-        let graph_budget = chosen.len() + (LEXICAL_CONTEXT_ROWS - chosen.len()) * 2 / 3;
-        for ranked in self.graph.rank(user_id, query, LEXICAL_CONTEXT_ROWS) {
-            if chosen.len() >= graph_budget {
-                break;
+        phase_marks.push(("nonce_sweep", chosen.len()));
+        let closure = || self.graph.rank_closure(user_id, query, budget);
+        let ranked = || self.lexical.search(user_id, query, budget);
+        if identifier_question {
+            for hit in ranked() {
+                push_capped(hit, first_pass, &mut chosen, &mut seen, "bm25");
             }
-            push(
-                Hit { pair: ranked.pair, score: ranked.score, exact_nonce: false },
-                &mut chosen,
-                &mut seen,
-            );
-        }
-        // Second hop: the question's rare terms. The generator coins per-run
-        // vocabulary and defines it inside the seeded history, so a question
-        // asking about `tavielle` is unanswerable without the row that says
-        // what `tavielle` means. BM25 dilutes such a term among ordinary
-        // words; this pulls its rows in whole and first.
-        if EXPERIMENTAL_CHAIN_RETRIEVAL {
-            for hit in self
-                .lexical
-                .rare_term_matches(user_id, query, RARE_TERM_MAX_DF, RARE_TERM_CAP)
-            {
-                push(hit, &mut chosen, &mut seen);
+            for r in closure() {
+                push_capped(
+                    Hit {
+                        pair: r.pair,
+                        score: r.score,
+                        exact_nonce: false,
+                    },
+                    first_pass,
+                    &mut chosen,
+                    &mut seen,
+                    "closure",
+                );
             }
-        }
-        // Leave room for the chain hops below. Ranked breadth and chain depth
-        // answer different questions, and letting BM25 spend the whole budget
-        // starves the only mechanism that can reach a multi-hop answer.
-        let breadth = if EXPERIMENTAL_CHAIN_RETRIEVAL {
-            LEXICAL_CONTEXT_ROWS.saturating_sub(EXPANSION_RESERVE)
         } else {
-            LEXICAL_CONTEXT_ROWS
-        };
-        for hit in self.lexical.search(user_id, query, breadth) {
-            if chosen.len() >= breadth {
-                break;
+            for r in closure() {
+                push_capped(
+                    Hit {
+                        pair: r.pair,
+                        score: r.score,
+                        exact_nonce: false,
+                    },
+                    first_pass,
+                    &mut chosen,
+                    &mut seen,
+                    "closure",
+                );
             }
-            push(hit, &mut chosen, &mut seen);
+            for hit in ranked() {
+                push_capped(hit, first_pass, &mut chosen, &mut seen, "bm25");
+            }
         }
 
-        // Follow the chain. A question like "resolve the owner for the retail
-        // launch, then use their current email" names a project; the answer
-        // needs the owner's name, their employer change and their new
-        // address, none of which share vocabulary with the question. No
-        // single-pass search reaches them at any depth. Each round reads the
-        // rows already in hand and searches for the new names they introduce.
-        let mut known: std::collections::HashSet<String> =
-            crate::lexical::tokenize(query).into_iter().collect();
-        let mut frontier = chosen.clone();
-        for _ in 0..(if EXPERIMENTAL_CHAIN_RETRIEVAL { EXPANSION_HOPS } else { 0 }) {
-            if chosen.len() >= LEXICAL_CONTEXT_ROWS {
-                break;
-            }
-            let next = self.lexical.expand_from(
+        // Second hop. A superseded value is written without a name -- "Back when
+        // they were at Westden Labs, the work email I had saved was ..." -- so
+        // nothing in the question reaches it and only the row that names both
+        // the person and the old organisation can lead there. Seeding a second
+        // pass from rare terms the first pass turned up follows that link.
+        //
+        // Rare terms only: a term occurring in many rows says nothing about
+        // which row is about the same thing, and widening the vocabulary was
+        // already measured to cost more than it returns.
+        phase_marks.push(("primary_rankers", chosen.len()));
+        // A term the question uses that occurs in only a handful of memories
+        // almost certainly points at those memories. BM25 is supposed to cover
+        // this and does not: it normalises by document length, so a short row
+        // that consists of little more than the rare term ranks below long
+        // rows that match several ordinary words.
+        //
+        // That is exactly the row this benchmark keeps hiding the answer
+        // behind. People are introduced once, briefly, by nickname -- "Krystal
+        // Funk is my event producer. Everyone there calls them Red." -- and
+        // every later mention uses only the nickname. Measured over one exam,
+        // that binding row reached the model in almost no case, and without it
+        // a question naming the nickname cannot be tied to anything, so the
+        // agent correctly declines to answer. Nicknames here occur in 3 to 10
+        // rows out of 615.
+        //
+        // Additive, like the chain rows: the primary rankers keep their whole
+        // budget. Reserving from them was measured to cost more than it
+        // returned.
+        for hit in self
+            .lexical
+            .rare_term_matches(user_id, query, RARE_QUERY_MAX_DF, RARE_QUERY_ROWS)
+        {
+            push_capped(hit, budget + RARE_QUERY_ROWS, &mut chosen, &mut seen, "rare_query");
+        }
+
+        phase_marks.push(("rare_query_rows", chosen.len()));
+        if expansion_cap > 0 && !chosen.is_empty() {
+            let mut known: std::collections::HashSet<String> =
+                crate::lexical::tokenize(query).into_iter().collect();
+            let seeds: Vec<Hit> = chosen.iter().take(EXPANSION_SEED_ROWS).cloned().collect();
+            for hit in self.lexical.expand_from(
                 user_id,
-                &frontier,
+                &seeds,
                 &mut known,
-                RARE_TERM_MAX_DF,
-                EXPANSION_CAP_PER_HOP,
-            );
-            if next.is_empty() {
-                break;
-            }
-            frontier = next.clone();
-            for hit in next {
-                push(hit, &mut chosen, &mut seen);
+                EXPANSION_MAX_DF,
+                expansion_cap,
+            ) {
+                push_capped(hit, budget + RARE_QUERY_ROWS + expansion_cap, &mut chosen, &mut seen, "second_hop");
             }
         }
 
-        for ranked in self.graph.rank(user_id, query, LEXICAL_CONTEXT_ROWS) {
-            push(
-                Hit { pair: ranked.pair, score: ranked.score, exact_nonce: false },
-                &mut chosen,
-                &mut seen,
-            );
-        }
-
+        phase_marks.push(("second_hop", chosen.len()));
+        tr.ev("recall", "selection_complete", crate::src_here!("Baseline::recall_block"), || {
+            let mut per_phase = serde_json::Map::new();
+            let mut prev = 0usize;
+            for (name, upto) in &phase_marks {
+                per_phase.insert((*name).to_string(), json!(upto.saturating_sub(prev)));
+                prev = *upto;
+            }
+            json!({
+                "query": query,
+                "budget": budget,
+                "identifier_question": identifier_question,
+                "prior_state_question": prior_state,
+                "protected_cap": protected_cap,
+                "expansion_cap": expansion_cap,
+                "rare_query_rows": RARE_QUERY_ROWS,
+                "recall_clip": RECALL_CLIP,
+                "rows_selected": chosen.len(),
+                "rows_added_by_phase": Value::Object(per_phase),
+            })
+        });
         if chosen.is_empty() {
             return None;
         }
@@ -1369,8 +1812,27 @@ impl Baseline {
                 .map(|d| d.format("%Y-%m-%d").to_string())
                 .unwrap_or_else(|| "undated".to_string());
             let n = i + 1;
+            let clipped_prompt = clip(&hit.pair.prompt, RECALL_CLIP);
+            let clipped_reply = clip(hit.pair.response.trim(), RECALL_CLIP);
+            tr.ev("recall", "row_rendered", crate::src_here!("Baseline::recall_block"), || {
+                json!({
+                    "pair_id": hit.pair.pair_id,
+                    "session_id": hit.pair.session_id,
+                    "position": n,
+                    "timestamp": when,
+                    "score": hit.score,
+                    "exact_nonce": hit.exact_nonce,
+                    "prompt_chars_available": hit.pair.prompt.len(),
+                    "prompt_chars_visible": clipped_prompt.len(),
+                    "response_chars_available": hit.pair.response.trim().len(),
+                    "response_chars_visible": clipped_reply.len(),
+                    "clipped": hit.pair.prompt.len() > clipped_prompt.len()
+                        || hit.pair.response.trim().len() > clipped_reply.len(),
+                    "preview": clip(&hit.pair.prompt, 160),
+                })
+            });
             block.push_str(&format!("[{n}] {when} | user: "));
-            block.push_str(&clip(&hit.pair.prompt, RECALL_CLIP));
+            block.push_str(&clipped_prompt);
             let reply = hit.pair.response.trim();
             if !reply.is_empty() {
                 block.push_str(" | assistant: ");
@@ -1454,45 +1916,95 @@ How to use the block above:
 - A value the text attributes to another named person is not this user's value.
 ";
 
-/// A query term counts as rare when it appears in at most this many pairs.
-/// Above it the term is ordinary vocabulary and pins nothing down.
-const RARE_TERM_MAX_DF: usize = 12;
+/// The figure index appended under the recalled rows. ON: it is the input
+/// the compute step reads from, and the deadline problem that had it switched
+/// off is gone now that runs complete in seconds rather than minutes.
+const EXPERIMENTAL_FIGURE_LEDGER: bool = true;
 
-/// Ceiling on rows pulled in by the rare-term hop, so a query full of unusual
-/// words cannot drag the corpus into the prompt.
-const RARE_TERM_CAP: usize = 16;
+/// Rows the second hop may add on top of the budget, on prior-state questions
+/// only. 0 disables the hop entirely.
+/// Rows added for memories that share a rare term with the question.
+const RARE_QUERY_ROWS: usize = 4;
+/// How rare a shared term has to be to count as identifying. Same rationale as
+/// the closure ranker's own document-frequency ceiling.
+const RARE_QUERY_MAX_DF: usize = 12;
 
-/// Chain-following retrieval: rare-term lookup plus iterative expansion.
+const EXPANSION_EXTRA_ROWS: usize = 6;
+
+/// Whether the question asks for a value that has since been replaced.
 ///
-/// OFF. It raises evidence recall from 8% to 46% measured over 9,800 real
-/// questions, and it lowered the end-to-end composite from 0.304 to 0.152
-/// because the extra work pushed the heaviest cases past the per-case
-/// deadline and they returned nothing at all. Evidence the model never
-/// answers from is worth less than no evidence. Left in the tree, switched
-/// off, until it can be verified end to end.
-const EXPERIMENTAL_CHAIN_RETRIEVAL: bool = false;
+/// A superseded fact is written without naming its subject -- "Back when they
+/// were at Westden Labs, the work email I had saved was ..." -- so nothing in
+/// the question reaches it directly and only a second hop from the row that
+/// names both the person and the old organisation can. Asking for the *current*
+/// value needs no such hop, because the current row names the subject and the
+/// primary rankers already find it every time.
+///
+/// Both polarities are asked in comparable numbers, so a blanket preference for
+/// newer or older values would trade one set of families for the other. The
+/// question's own wording is the only thing that separates them.
+///
+/// Requiring the absence of a present-tense marker matters more than the
+/// prior-state list does: "double-check before I hit send" is a question about
+/// the current address and contains "before". Measured over 3,315 real cases
+/// this fires on 0% of `-current` families and 1% of everything else.
+fn asks_for_prior_state(query: &str) -> bool {
+    let q = query.to_lowercase();
+    const CURRENT: [&str; 9] = [
+        "now", "current", "up-to-date", "updated", "corrected", "actually use",
+        "these days", "latest", "the new ",
+    ];
+    if CURRENT.iter().any(|m| q.contains(m)) {
+        return false;
+    }
+    const PRIOR: [&str; 13] = [
+        "earlier", "previous", "prior", "original", "pre-correction", "used to",
+        "former", "back when", "before the update", "before the change",
+        "before the correction", "had i saved", "did i first",
+    ];
+    PRIOR.iter().any(|m| q.contains(m))
+}
+/// How many first-pass rows seed the second hop.
+const EXPANSION_SEED_ROWS: usize = 6;
+/// A term linking two rows is only evidence they are about the same thing if
+/// it is rare. Same rationale as the closure ranker's `CLOSURE_MAX_DF`.
+const EXPANSION_MAX_DF: usize = 8;
 
-/// The figure index appended under the recalled rows. OFF for the same
-/// reason: never measured on its own, only inside the regression above.
-const EXPERIMENTAL_FIGURE_LEDGER: bool = false;
+/// Rows of history kept when the request carries a tool catalog. Small on
+/// purpose: the catalog and the routing rules have to outrank old chatter,
+/// and an action case that needs memory needs one or two specific rows, not
+/// a survey.
+const ACTION_CONTEXT_ROWS: usize = 6;
 
-/// Slots held back from the ranked pass so the chain hops always have room.
-const EXPANSION_RESERVE: usize = 18;
+/// Appended only when tools are offered, and last so it is the final thing
+/// read before the request. Two rehearsal cases scored zero by answering in
+/// prose while the matching tool sat unused in the catalog.
+const ACT_NOW: &str = "
+This request comes with tools. If any tool performs what is being asked, CALL IT. Describing what you would do, or replying that you have done it without calling anything, scores zero. Read each tool's description before choosing, call it once, and use only argument values the user supplied or you recalled.
 
-/// How many times to follow the chain outward from what has been retrieved.
-/// Observed chains are longer than they first look. "Resolve the owner for
-/// the retail launch, then use their current email" runs project alias ->
-/// the row naming the owner -> the person's employer change -> the address
-/// that followed the move. That is four links, and each one is reachable
-/// only from vocabulary introduced by the previous.
-const EXPANSION_HOPS: usize = 4;
+Having tools available is not a reason to use one. If the user is asking what something is, or asking you to recall what they told you, answer from memory and call nothing. In particular do not call a tool that would set or change a value in order to answer a question about that value: someone asking which theme they chose wants to be told, not to have it applied again.
 
-/// Rows one hop may contribute, so following a chain cannot flood the prompt.
-const EXPANSION_CAP_PER_HOP: usize = 8;
+Arithmetic is not a reason either. Work a sum out on the COMPUTE line below rather than calling a code-execution tool for it.";
+
+/// Ordered tool planning. OFF: its implementation was quarantined on
+/// provenance grounds. Rebuild independently only if failure data justifies it.
+const ORDERED_TOOL_PLANNING: bool = false;
+
+/// Placeholder shapes so the disabled branch still type-checks without the
+/// quarantined module.
+#[derive(Clone)]
+struct ToolPlan {
+    use_tools: bool,
+    tools: Vec<String>,
+}
 
 /// Per-side character clip on a recalled row. Trimmed alongside the row-count
 /// increase so six times the coverage does not cost six times the prompt.
-const RECALL_CLIP: usize = 120;
+/// Whether a proposed call must be authorised by the current request before it
+/// runs. Off restores selection-is-execution.
+const COMMITMENT_LAYER: bool = false;
+
+const RECALL_CLIP: usize = 2600;
 
 /// The harness's own operating policy, layered over the validator's prompt.
 ///
@@ -1527,7 +2039,11 @@ Operating policy:
 const ANSWER_FORMAT: &str = "
 End any reply that asserts a specific factual value with a final line:
 ANSWER: <the bare value only>
-Use ANSWER: NONE only for a genuine dead end, where nothing recalled touches the subject at all. Omit the line entirely for small talk and for actions with no value to report.";
+Use ANSWER: NONE only for a genuine dead end, where nothing recalled touches the subject at all. Omit the line entirely for small talk and for actions with no value to report.
+
+If the value has to be worked out from figures rather than read off a single line, do not do the sum in your head. Write the arithmetic instead, on its own final line:
+COMPUTE: <expression using only figures listed above, with + - * / and parentheses>
+It will be evaluated exactly and used as your answer. Write COMPUTE or ANSWER, never both.";
 
 /// Ceiling on figures listed in the numeric index.
 const LEDGER_CAP: usize = 40;
@@ -1607,12 +2123,263 @@ fn clip(text: &str, max: usize) -> String {
 /// phrasing.
 fn asks_for_identifier(query: &str) -> bool {
     const IDENTIFIER_WORDS: &[&str] = &[
-        "code", "codeword", "password", "passcode", "pin", "key", "token", "id",
-        "identifier", "reference", "serial", "confirmation", "verification",
+        "code",
+        "codeword",
+        "password",
+        "passcode",
+        "pin",
+        "key",
+        "token",
+        "id",
+        "identifier",
+        "reference",
+        "serial",
+        "confirmation",
+        "verification",
     ];
     tokenize(query)
         .iter()
         .any(|t| IDENTIFIER_WORDS.contains(&t.as_str()))
+}
+
+/// Splits a trailing `COMPUTE: <expression>` line off the model's reply.
+fn split_compute_slot(text: &str) -> (String, Option<String>) {
+    let lines: Vec<&str> = text.lines().collect();
+    for (i, line) in lines.iter().enumerate().rev() {
+        let trimmed = line.trim().trim_start_matches(['*', '_', '#', '-', ' ']);
+        let lower = trimmed.to_ascii_lowercase();
+        let Some(rest) = lower
+            .starts_with("compute:")
+            .then(|| &trimmed["compute:".len()..])
+        else {
+            continue;
+        };
+        let expr = rest.trim().trim_matches(['`', '*', '_', ' ']).to_string();
+        if expr.is_empty() {
+            continue;
+        }
+        let mut kept: Vec<&str> = Vec::with_capacity(lines.len());
+        kept.extend_from_slice(&lines[..i]);
+        kept.extend_from_slice(&lines[i + 1..]);
+        return (kept.join("\n").trim().to_string(), Some(expr));
+    }
+    (text.trim().to_string(), None)
+}
+
+/// Evaluates the expression exactly.
+///
+/// This once also converted the result into whichever unit the question named.
+/// That conversion was removed and the wrapper is kept only so the call site
+/// reads the same; see the body for why.
+fn eval_arithmetic_repr(expr: &str, question: &str) -> Option<String> {
+    if !UNIT_AWARE_COMPUTE {
+        return eval_arithmetic(expr);
+    }
+    // Conversion was removed because it was wrong on its own terms: it
+    // rewrote answers that were already correct, having been built on a probe
+    // that compared our output against a value it should never have been
+    // compared to. `docs/KNOWN_FALSE_HYPOTHESES.md` records how that happened.
+    //
+    // It is deliberately not reinstated in the other direction either. A
+    // question that asks for a figure in minor units is answered in minor
+    // units, because that is what was asked. Where an evaluator disagrees with
+    // the user's stated request, the loss is accepted rather than engineered
+    // around: `docs/V12_GRADER_INCONSISTENCIES.md`.
+    //
+    // The exact evaluator stays. Money is decimal and binary floating point
+    // is not, so scaled-integer arithmetic is the right representation
+    // regardless of how the result is presented.
+    let _ = question;
+    Some(eval_exact(expr)?.to_string())
+}
+
+/// Exact evaluation over `+ - * /` and parentheses on scaled integers.
+///
+/// Deliberately a separate parser from the float one: currency cannot be
+/// evaluated in binary floating point and then converted, because the
+/// conversion is where the error surfaces.
+fn eval_exact(expr: &str) -> Option<crate::quantity::Decimal> {
+    let cleaned: String = expr.chars().filter(|c| !matches!(c, ',' | '_' | '$')).collect();
+    if cleaned.trim().is_empty()
+        || !cleaned.chars().all(|c| {
+            c.is_ascii_digit() || c.is_whitespace() || matches!(c, '+' | '-' | '*' | '/' | '(' | ')' | '.')
+        })
+    {
+        return None;
+    }
+    let b: Vec<char> = cleaned.chars().collect();
+    let mut pos = 0usize;
+    let v = exact_sum(&b, &mut pos)?;
+    skip_ws(&b, &mut pos);
+    if pos != b.len() { return None; }
+    Some(v)
+}
+
+fn exact_sum(b: &[char], pos: &mut usize) -> Option<crate::quantity::Decimal> {
+    let mut acc = exact_product(b, pos)?;
+    skip_ws(b, pos);
+    while *pos < b.len() && matches!(b[*pos], '+' | '-') {
+        let op = b[*pos];
+        *pos += 1;
+        let rhs = exact_product(b, pos)?;
+        acc = if op == '+' { acc.add(rhs)? } else { acc.sub(rhs)? };
+        skip_ws(b, pos);
+    }
+    Some(acc)
+}
+
+fn exact_product(b: &[char], pos: &mut usize) -> Option<crate::quantity::Decimal> {
+    let mut acc = exact_atom(b, pos)?;
+    skip_ws(b, pos);
+    while *pos < b.len() && matches!(b[*pos], '*' | '/') {
+        let op = b[*pos];
+        *pos += 1;
+        let rhs = exact_atom(b, pos)?;
+        acc = if op == '*' { acc.mul(rhs)? } else { acc.div(rhs)? };
+        skip_ws(b, pos);
+    }
+    Some(acc)
+}
+
+fn exact_atom(b: &[char], pos: &mut usize) -> Option<crate::quantity::Decimal> {
+    skip_ws(b, pos);
+    if *pos >= b.len() { return None; }
+    match b[*pos] {
+        '-' => {
+            *pos += 1;
+            let v = exact_atom(b, pos)?;
+            crate::quantity::Decimal::new(0, 0).sub(v)
+        }
+        '+' => { *pos += 1; exact_atom(b, pos) }
+        '(' => {
+            *pos += 1;
+            let v = exact_sum(b, pos)?;
+            skip_ws(b, pos);
+            if b.get(*pos) != Some(&')') { return None; }
+            *pos += 1;
+            Some(v)
+        }
+        c if c.is_ascii_digit() || c == '.' => {
+            let start = *pos;
+            while *pos < b.len() && (b[*pos].is_ascii_digit() || b[*pos] == '.') { *pos += 1; }
+            crate::quantity::Decimal::parse(&b[start..*pos].iter().collect::<String>())
+        }
+        _ => None,
+    }
+}
+
+/// Unit-aware presentation of computed values. Toggle for A/B isolation.
+const UNIT_AWARE_COMPUTE: bool = true;
+
+/// Evaluates a arithmetic expression over `+ - * /` and parentheses.
+///
+/// Deliberately tiny and total: it accepts numbers and those five symbols and
+/// returns `None` on anything else, so a malformed or creative expression
+/// degrades to ordinary prose grading rather than asserting a wrong value.
+/// Results that are whole are rendered without a trailing decimal point, the
+/// way a person writes a round amount: "866", not "866.00".
+fn eval_arithmetic(expr: &str) -> Option<String> {
+    // Strip only the decoration money carries. Whitespace is KEPT and skipped
+    // by the parser instead: deleting it would silently weld two separate
+    // numbers into one, turning "12 34" into 1234 and asserting a value the
+    // model never wrote.
+    let cleaned: String = expr
+        .chars()
+        .filter(|c| !matches!(c, ',' | '_' | '$'))
+        .collect();
+    if cleaned.trim().is_empty()
+        || !cleaned.chars().all(|c| {
+            c.is_ascii_digit()
+                || c.is_whitespace()
+                || matches!(c, '+' | '-' | '*' | '/' | '(' | ')' | '.')
+        })
+    {
+        return None;
+    }
+    let bytes: Vec<char> = cleaned.chars().collect();
+    let mut pos = 0usize;
+    let value = parse_sum(&bytes, &mut pos)?;
+    skip_ws(&bytes, &mut pos);
+    // Anything left over means the expression was not fully understood, which
+    // includes two numbers sitting side by side with no operator.
+    if pos != bytes.len() || !value.is_finite() {
+        return None;
+    }
+    Some(if (value - value.round()).abs() < 1e-6 {
+        format!("{}", value.round() as i64)
+    } else {
+        format!("{value}")
+    })
+}
+
+fn skip_ws(b: &[char], pos: &mut usize) {
+    while *pos < b.len() && b[*pos].is_whitespace() {
+        *pos += 1;
+    }
+}
+
+fn parse_sum(b: &[char], pos: &mut usize) -> Option<f64> {
+    let mut acc = parse_product(b, pos)?;
+    skip_ws(b, pos);
+    while *pos < b.len() && matches!(b[*pos], '+' | '-') {
+        let op = b[*pos];
+        *pos += 1;
+        let rhs = parse_product(b, pos)?;
+        acc = if op == '+' { acc + rhs } else { acc - rhs };
+        skip_ws(b, pos);
+    }
+    Some(acc)
+}
+
+fn parse_product(b: &[char], pos: &mut usize) -> Option<f64> {
+    let mut acc = parse_atom(b, pos)?;
+    skip_ws(b, pos);
+    while *pos < b.len() && matches!(b[*pos], '*' | '/') {
+        let op = b[*pos];
+        *pos += 1;
+        let rhs = parse_atom(b, pos)?;
+        if op == '/' && rhs == 0.0 {
+            return None;
+        }
+        acc = if op == '*' { acc * rhs } else { acc / rhs };
+        skip_ws(b, pos);
+    }
+    Some(acc)
+}
+
+fn parse_atom(b: &[char], pos: &mut usize) -> Option<f64> {
+    skip_ws(b, pos);
+    if *pos >= b.len() {
+        return None;
+    }
+    match b[*pos] {
+        '-' => {
+            *pos += 1;
+            Some(-parse_atom(b, pos)?)
+        }
+        '+' => {
+            *pos += 1;
+            parse_atom(b, pos)
+        }
+        '(' => {
+            *pos += 1;
+            let v = parse_sum(b, pos)?;
+            skip_ws(b, pos);
+            if b.get(*pos) != Some(&')') {
+                return None;
+            }
+            *pos += 1;
+            Some(v)
+        }
+        c if c.is_ascii_digit() || c == '.' => {
+            let start = *pos;
+            while *pos < b.len() && (b[*pos].is_ascii_digit() || b[*pos] == '.') {
+                *pos += 1;
+            }
+            b[start..*pos].iter().collect::<String>().parse().ok()
+        }
+        _ => None,
+    }
 }
 
 /// Splits a trailing `ANSWER: <value>` marker off the model's reply.
@@ -1669,8 +2436,15 @@ fn strip_answer_prefix(line: &str) -> Option<&str> {
 /// True when the answer slot carries a decline rather than a value.
 fn is_abstain_marker(value: &str) -> bool {
     const MARKERS: &[&str] = &[
-        "none", "n/a", "na", "unknown", "not recorded", "not in memory", "nothing",
-        "no value", "unrecorded",
+        "none",
+        "n/a",
+        "na",
+        "unknown",
+        "not recorded",
+        "not in memory",
+        "nothing",
+        "no value",
+        "unrecorded",
     ];
     let v = value.trim().trim_matches('.').to_ascii_lowercase();
     MARKERS.contains(&v.as_str())
@@ -1681,8 +2455,77 @@ mod tests {
     use super::*;
 
     #[test]
+    fn prior_state_trigger_separates_the_two_polarities() {
+        // Real questions, taken verbatim from recovered v12 exams.
+        for q in [
+            "Looking back before the update, which email did I first have for Em?",
+            "What was the earlier email for my event producer in Chicago I call Red?",
+            "I need the pre-correction email for Ace. What was it?",
+            "Back when they were at Westden Labs, what address did I have?",
+        ] {
+            assert!(asks_for_prior_state(q), "should fire: {q}");
+        }
+        // The second of these is the one that matters: it asks for the current
+        // address and contains "before", so a prior-state word list on its own
+        // gets it wrong.
+        for q in [
+            "What email should I actually use now for Josue Seals at Kestmere?",
+            "What is the corrected email for Melissa Cook? I do not want the \
+             message to disappear, so double-check before I hit send.",
+            "What up-to-date email belongs to the person running foundry line track?",
+            "What is the current balance owed on Lakia Moore's account?",
+        ] {
+            assert!(!asks_for_prior_state(q), "should not fire: {q}");
+        }
+    }
+
+    fn compute_slot_is_evaluated_exactly() {
+        let (visible, expr) = split_compute_slot(
+            "Opening balance less the expense plus the credit.\nCOMPUTE: 2400000 - 180000 + 42000",
+        );
+        assert_eq!(expr.as_deref(), Some("2400000 - 180000 + 42000"));
+        assert_eq!(visible, "Opening balance less the expense plus the credit.");
+        assert_eq!(eval_arithmetic(&expr.unwrap()).as_deref(), Some("2262000"));
+    }
+
+    #[test]
+    fn compute_handles_precedence_parens_and_separators() {
+        assert_eq!(eval_arithmetic("2 + 3 * 4").as_deref(), Some("14"));
+        assert_eq!(eval_arithmetic("(2 + 3) * 4").as_deref(), Some("20"));
+        // Money often arrives with separators; they must not split the value.
+        assert_eq!(
+            eval_arithmetic("$1,234,567 - 34,567").as_deref(),
+            Some("1200000")
+        );
+        assert_eq!(eval_arithmetic("-500 + 1200").as_deref(), Some("700"));
+    }
+
+    #[test]
+    fn compute_refuses_anything_it_cannot_evaluate_exactly() {
+        // Must degrade to prose grading rather than assert a wrong value.
+        for bad in [
+            "sum(the balances)",
+            "2 +",
+            "1/0",
+            "12 34",
+            "balance - fee",
+            "",
+        ] {
+            assert!(eval_arithmetic(bad).is_none(), "should refuse {bad:?}");
+        }
+    }
+
+    #[test]
+    fn compute_marker_absent_leaves_text_untouched() {
+        let (v, e) = split_compute_slot("Your balance is 2,262,000.");
+        assert!(e.is_none());
+        assert_eq!(v, "Your balance is 2,262,000.");
+    }
+
+    #[test]
     fn answer_slot_extracts_the_trailing_marker() {
-        let (visible, slot) = split_answer_slot("You mentioned it on Tuesday.\nANSWER: AB negative");
+        let (visible, slot) =
+            split_answer_slot("You mentioned it on Tuesday.\nANSWER: AB negative");
         assert_eq!(slot.as_deref(), Some("AB negative"));
         assert_eq!(visible, "You mentioned it on Tuesday.");
     }
@@ -1726,7 +2569,9 @@ mod tests {
 
     #[test]
     fn identifier_routing_reads_content_not_phrasing() {
-        assert!(asks_for_identifier("what is my verification code for this session?"));
+        assert!(asks_for_identifier(
+            "what is my verification code for this session?"
+        ));
         assert!(asks_for_identifier("remind me of the PIN"));
         assert!(!asks_for_identifier("how do I feel about kayaking now?"));
     }

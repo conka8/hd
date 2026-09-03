@@ -37,7 +37,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
-use crate::lexical::{nonce_like, StoredPair};
+use crate::lexical::{StoredPair, nonce_like};
 
 /// Damping: the share of mass that keeps walking rather than restarting at
 /// the question's own entities. Higher reaches further along a chain but
@@ -192,7 +192,10 @@ impl UserGraph {
             .iter()
             .enumerate()
             .filter(|(_, s)| **s > 0.0)
-            .map(|(i, s)| Ranked { pair: self.pairs[i].clone(), score: *s })
+            .map(|(i, s)| Ranked {
+                pair: self.pairs[i].clone(),
+                score: *s,
+            })
             .collect();
         out.sort_by(|a, b| {
             b.score
@@ -205,6 +208,134 @@ impl UserGraph {
     }
 }
 
+impl UserGraph {
+    /// Rarity-weighted co-occurrence closure.
+    ///
+    /// The alternative to diffusion, and the method five independent v11
+    /// miners converged on. It is classical record linkage: a value occurring
+    /// in only a handful of records identifies a thing, so two records
+    /// carrying the same such value are about the same thing. The linking
+    /// strength of a shared value is its inverse document frequency, and
+    /// blocking-key literature says the same thing in reverse - a key that is
+    /// not distinctive puts unrelated records in one block.
+    ///
+    /// Where PageRank differs, and why it may be the weaker choice here:
+    /// diffusion divides a node's mass by its degree and then renormalises,
+    /// which deliberately flattens the difference between a value seen twice
+    /// and a value seen forty times. That difference is exactly the signal.
+    /// This scores it explicitly instead, and expands in bounded hops with a
+    /// decay rather than letting mass wander.
+    fn rank_closure(&self, query: &str, k: usize, hops: usize) -> Vec<Ranked> {
+        if self.pairs.is_empty() {
+            return Vec::new();
+        }
+        let n = self.pairs.len() as f32;
+        let ubiquity = ((self.pairs.len() as f32) * UBIQUITY_RATIO).max(2.0) as usize;
+        let idf = |df: usize| -> f32 {
+            if df == 0 {
+                0.0
+            } else {
+                (1.0 + n / df as f32).ln()
+            }
+        };
+
+        let mut score = vec![0.0f32; self.pairs.len()];
+        let mut used: HashSet<u32> = HashSet::new();
+
+        // Hop 0: values the question itself names.
+        let mut frontier: Vec<u32> = Vec::new();
+        for name in extract_entities(query) {
+            if let Some(&eid) = self.entity_id.get(&name) {
+                if self.ent_pairs[eid as usize].len() <= ubiquity && used.insert(eid) {
+                    frontier.push(eid);
+                }
+            }
+        }
+        if frontier.is_empty() {
+            return Vec::new();
+        }
+
+        let mut weight = 1.0f32;
+        for _ in 0..=hops {
+            let mut touched: Vec<u32> = Vec::new();
+            for &eid in &frontier {
+                let posting = &self.ent_pairs[eid as usize];
+                let w = idf(posting.len()) * weight;
+                for &pid in posting {
+                    score[pid as usize] += w;
+                    touched.push(pid);
+                }
+            }
+            if touched.is_empty() {
+                break;
+            }
+            // Next hop links through the rarest values carried by the records
+            // reached so far. Common values are skipped: following them is
+            // what turns closure into a crawl of the whole corpus.
+            touched.sort_unstable();
+            touched.dedup();
+            let mut next: Vec<(usize, u32)> = Vec::new();
+            for pid in touched {
+                for &eid in &self.pair_ents[pid as usize] {
+                    let df = self.ent_pairs[eid as usize].len();
+                    if df <= CLOSURE_MAX_DF && !used.contains(&eid) {
+                        next.push((df, eid));
+                    }
+                }
+            }
+            next.sort_unstable();
+            frontier.clear();
+            for (_, eid) in next.into_iter().take(CLOSURE_LINKS_PER_HOP) {
+                if used.insert(eid) {
+                    frontier.push(eid);
+                }
+            }
+            if frontier.is_empty() {
+                break;
+            }
+            weight *= CLOSURE_DECAY;
+        }
+
+        let mut out: Vec<Ranked> = score
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| **s > 0.0)
+            .map(|(i, s)| Ranked {
+                pair: self.pairs[i].clone(),
+                score: *s,
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.pair.ordinal.cmp(&b.pair.ordinal))
+        });
+        out.truncate(k);
+        // Chronological within the selected set: "before the last change" and
+        // "most recent" are read off the order, not inferred.
+        out.sort_by(|a, b| match (a.pair.timestamp, b.pair.timestamp) {
+            (Some(x), Some(y)) => x.cmp(&y),
+            _ => a.pair.ordinal.cmp(&b.pair.ordinal),
+        });
+        out
+    }
+}
+
+/// A value linking more records than this is ordinary vocabulary; following
+/// it turns bounded closure into a crawl of the corpus.
+const CLOSURE_MAX_DF: usize = 8;
+
+/// Links followed per hop, rarest first.
+const CLOSURE_LINKS_PER_HOP: usize = 24;
+
+/// Per-hop weight decay, so a record three links away cannot outrank one the
+/// question named directly.
+const CLOSURE_DECAY: f32 = 0.45;
+
+/// Hops of closure. Observed chains run to four links.
+const CLOSURE_HOPS: usize = 4;
+
 /// Names worth linking passages by: proper-noun runs, quoted spans, email
 /// addresses and coined codes. Lowercased so "Micky" and "micky" are one node.
 ///
@@ -214,7 +345,7 @@ impl UserGraph {
 pub fn extract_entities(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    let mut push = |s: String, out: &mut Vec<String>, seen: &mut HashSet<String>| {
+    let push = |s: String, out: &mut Vec<String>, seen: &mut HashSet<String>| {
         let s = s.trim().to_lowercase();
         if s.len() >= 3 && seen.insert(s.clone()) {
             out.push(s);
@@ -225,7 +356,7 @@ pub fn extract_entities(text: &str) -> Vec<String> {
     // Lackey" mid-sentence, the next opens with "Michael Lackey used to...".
     // Whole-span-only extraction makes those different nodes and the chain
     // silently breaks, which is exactly how this failed the first time.
-    let mut push_run = |words: &[String], out: &mut Vec<String>, seen: &mut HashSet<String>| {
+    let push_run = |words: &[String], out: &mut Vec<String>, seen: &mut HashSet<String>| {
         if words.is_empty() {
             return;
         }
@@ -264,7 +395,8 @@ pub fn extract_entities(text: &str) -> Vec<String> {
     let words: Vec<&str> = text.split_whitespace().collect();
     let mut run: Vec<String> = Vec::new();
     for raw in words.iter() {
-        let w = raw.trim_matches(|c: char| !c.is_alphanumeric() && c != '@' && c != '.' && c != '-');
+        let w =
+            raw.trim_matches(|c: char| !c.is_alphanumeric() && c != '@' && c != '.' && c != '-');
         if w.is_empty() {
             if !run.is_empty() {
                 push(run.join(" "), &mut out, &mut seen);
@@ -327,6 +459,16 @@ impl MemoryGraph {
             .map(|u| u.rank(query, k))
             .unwrap_or_default()
     }
+
+    /// Top passages by rarity-weighted co-occurrence closure.
+    pub fn rank_closure(&self, user_id: &str, query: &str, k: usize) -> Vec<Ranked> {
+        self.users
+            .read()
+            .expect("memory graph poisoned")
+            .get(user_id)
+            .map(|u| u.rank_closure(query, k, CLOSURE_HOPS))
+            .unwrap_or_default()
+    }
 }
 
 #[cfg(test)]
@@ -346,23 +488,52 @@ mod tests {
 
     #[test]
     fn extracts_names_addresses_and_quoted_spans() {
-        let e = extract_entities("When I say \"kestrel flight rollout\" I mean Project Kestrel for Faircroft Collective");
+        let e = extract_entities(
+            "When I say \"kestrel flight rollout\" I mean Project Kestrel for Faircroft Collective",
+        );
         assert!(e.iter().any(|x| x == "kestrel flight rollout"), "{e:?}");
         assert!(e.iter().any(|x| x.contains("faircroft")), "{e:?}");
         let e2 = extract_entities("the new work email is michael.lackey@ravenwyn.com.");
-        assert!(e2.iter().any(|x| x.starts_with("michael.lackey@")), "{e2:?}");
+        assert!(
+            e2.iter().any(|x| x.starts_with("michael.lackey@")),
+            "{e2:?}"
+        );
     }
 
     #[test]
     fn one_pass_reaches_the_end_of_a_four_link_chain() {
         let g = MemoryGraph::new();
         for i in 0..80 {
-            g.upsert("u", pair(&format!("f{i}"), i, "routine note about the weekly account review", "noted"));
+            g.upsert(
+                "u",
+                pair(
+                    &format!("f{i}"),
+                    i,
+                    "routine note about the weekly account review",
+                    "noted",
+                ),
+            );
         }
         g.upsert("u", pair("ev0", 80,
             "When I say \"kestrel flight rollout\" I mean the work for Faircroft Collective, owner Michael Lackey", "understood"));
-        g.upsert("u", pair("ev1", 81, "Remember: Michael Lackey is my cousin, everyone calls them Micky.", "noted"));
-        g.upsert("u", pair("ev2", 82, "Michael Lackey used to work at Penford Partners, now at Ravenwyn Company.", "noted"));
+        g.upsert(
+            "u",
+            pair(
+                "ev1",
+                81,
+                "Remember: Michael Lackey is my cousin, everyone calls them Micky.",
+                "noted",
+            ),
+        );
+        g.upsert(
+            "u",
+            pair(
+                "ev2",
+                82,
+                "Michael Lackey used to work at Penford Partners, now at Ravenwyn Company.",
+                "noted",
+            ),
+        );
         g.upsert("u", pair("ev3", 83, "After Micky moved to Ravenwyn Company the new email is michael.lackey@ravenwyn.com", "saved"));
 
         // The question names the project and the client. It never says
@@ -370,16 +541,28 @@ mod tests {
         let hits = g.rank("u", "For the \"kestrel flight rollout\" to Faircroft Collective, which email should I use now?", 12);
         let ids: Vec<&str> = hits.iter().map(|h| h.pair.pair_id.as_str()).collect();
         for want in ["ev0", "ev1", "ev2", "ev3"] {
-            assert!(ids.contains(&want), "PPR must reach {want} in one pass: {ids:?}");
+            assert!(
+                ids.contains(&want),
+                "PPR must reach {want} in one pass: {ids:?}"
+            );
         }
     }
 
     #[test]
     fn graphs_never_cross_users() {
         let g = MemoryGraph::new();
-        g.upsert("alice", pair("a1", 0, "Alice Adams works at Northwind Trading", "ok"));
-        g.upsert("bob", pair("b1", 0, "Bob Barker works at Southgate Mills", "ok"));
+        g.upsert(
+            "alice",
+            pair("a1", 0, "Alice Adams works at Northwind Trading", "ok"),
+        );
+        g.upsert(
+            "bob",
+            pair("b1", 0, "Bob Barker works at Southgate Mills", "ok"),
+        );
         let hits = g.rank("bob", "where does Alice Adams work?", 5);
-        assert!(hits.is_empty(), "bob's graph must not answer from alice's rows");
+        assert!(
+            hits.is_empty(),
+            "bob's graph must not answer from alice's rows"
+        );
     }
 }
